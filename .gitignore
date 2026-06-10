@@ -1,0 +1,4 @@
+/result
+/nomad-driver-kata
+*.test
+vendor/
