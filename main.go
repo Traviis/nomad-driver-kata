@@ -4,7 +4,7 @@ import (
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/plugins"
 
-	"github.com/trickfire/nomad-driver-kata/kata"
+	"github.com/Traviis/nomad-driver-kata/kata"
 )
 
 func main() {

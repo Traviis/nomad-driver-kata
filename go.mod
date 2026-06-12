@@ -1,4 +1,4 @@
-module github.com/trickfire/nomad-driver-kata
+module github.com/Traviis/nomad-driver-kata
 
 go 1.25.0
 
