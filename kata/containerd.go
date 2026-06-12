@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -230,20 +231,26 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 	}
 	for name, value := range cfg.Ulimit {
 		parts := strings.SplitN(value, ":", 2)
-		if len(parts) == 2 {
-			var soft, hard uint64
-			fmt.Sscanf(parts[0], "%d", &soft)
-			fmt.Sscanf(parts[1], "%d", &hard)
-			rlimit := specs.POSIXRlimit{
-				Type: "RLIMIT_" + strings.ToUpper(name),
-				Soft: soft,
-				Hard: hard,
-			}
-			specOpts = append(specOpts, func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
-				s.Process.Rlimits = append(s.Process.Rlimits, rlimit)
-				return nil
-			})
+		if len(parts) != 2 {
+			return fmt.Errorf("ulimit %s: expected soft:hard, got %q", name, value)
 		}
+		soft, err := strconv.ParseUint(parts[0], 10, 64)
+		if err != nil {
+			return fmt.Errorf("ulimit %s soft value: %w", name, err)
+		}
+		hard, err := strconv.ParseUint(parts[1], 10, 64)
+		if err != nil {
+			return fmt.Errorf("ulimit %s hard value: %w", name, err)
+		}
+		rlimit := specs.POSIXRlimit{
+			Type: "RLIMIT_" + strings.ToUpper(name),
+			Soft: soft,
+			Hard: hard,
+		}
+		specOpts = append(specOpts, func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
+			s.Process.Rlimits = append(s.Process.Rlimits, rlimit)
+			return nil
+		})
 	}
 
 	containerOpts := []containerd.NewContainerOpts{
