@@ -1,6 +1,7 @@
 package kata
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -775,5 +776,182 @@ func TestParseSignal(t *testing.T) {
 				t.Errorf("parseSignal(%q) = %d, want %d", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+func TestStopTask(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	if err := d.StopTask(cfg.ID, 5*time.Second, "SIGINT"); err != nil {
+		t.Fatalf("StopTask: %v", err)
+	}
+
+	if !rec.called("KillTask") {
+		t.Error("expected KillTask call")
+	}
+}
+
+func TestStopTaskDefaultSignal(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	if err := d.StopTask(cfg.ID, 5*time.Second, ""); err != nil {
+		t.Fatalf("StopTask: %v", err)
+	}
+
+	rec.mu.Lock()
+	var signal string
+	for _, c := range rec.calls {
+		if c.Method == "KillTask" && len(c.Args) >= 2 {
+			signal, _ = c.Args[1].(string)
+		}
+	}
+	rec.mu.Unlock()
+	if signal != "SIGTERM" {
+		t.Errorf("expected default SIGTERM, got %q", signal)
+	}
+}
+
+func TestWaitTask(t *testing.T) {
+	d, _ := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := d.WaitTask(ctx, cfg.ID)
+	if err != nil {
+		t.Fatalf("WaitTask: %v", err)
+	}
+
+	result := <-ch
+	if result == nil {
+		t.Fatal("expected non-nil exit result")
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
+	}
+}
+
+func TestWaitTaskNotFound(t *testing.T) {
+	d, _ := testDriverWithRecorder()
+	_, err := d.WaitTask(context.Background(), "nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown task")
+	}
+}
+
+func TestSignalTask(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	if err := d.SignalTask(cfg.ID, "SIGUSR1"); err != nil {
+		t.Fatalf("SignalTask: %v", err)
+	}
+
+	rec.mu.Lock()
+	var signal string
+	for _, c := range rec.calls {
+		if c.Method == "KillTask" && len(c.Args) >= 2 {
+			signal, _ = c.Args[1].(string)
+		}
+	}
+	rec.mu.Unlock()
+	if signal != "SIGUSR1" {
+		t.Errorf("expected SIGUSR1, got %q", signal)
+	}
+}
+
+func TestExecTask(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	result, err := d.ExecTask(cfg.ID, []string{"echo", "hello"}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("ExecTask: %v", err)
+	}
+
+	if result.ExitResult.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitResult.ExitCode)
+	}
+
+	if !rec.called("Exec") {
+		t.Error("expected Exec call")
+	}
+}
+
+func TestRecoverTask(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	containerID := "kata-alloc-1-web"
+	rec.mu.Lock()
+	rec.running[containerID] = true
+	rec.mu.Unlock()
+
+	state := &TaskState{
+		ContainerID: containerID,
+		SandboxID:   "kata-alloc-1-sandbox",
+		AllocID:     "alloc-1",
+		TaskName:    "web",
+		StartedAt:   time.Now().UnixNano(),
+	}
+
+	handle := drivers.NewTaskHandle(taskHandleVersion)
+	handle.Config = cfg
+	if err := handle.SetDriverState(state); err != nil {
+		t.Fatalf("SetDriverState: %v", err)
+	}
+
+	if err := d.RecoverTask(handle); err != nil {
+		t.Fatalf("RecoverTask: %v", err)
+	}
+
+	if _, ok := d.tasks.Get(cfg.ID); !ok {
+		t.Error("task should be in store after recovery")
+	}
+}
+
+func TestRecoverTaskNotRunning(t *testing.T) {
+	d, _ := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	state := &TaskState{
+		ContainerID: "kata-alloc-1-web",
+		SandboxID:   "kata-alloc-1-sandbox",
+		AllocID:     "alloc-1",
+		TaskName:    "web",
+		StartedAt:   time.Now().UnixNano(),
+	}
+
+	handle := drivers.NewTaskHandle(taskHandleVersion)
+	handle.Config = cfg
+	if err := handle.SetDriverState(state); err != nil {
+		t.Fatalf("SetDriverState: %v", err)
+	}
+
+	err := d.RecoverTask(handle)
+	if err == nil {
+		t.Error("expected error when container is not running")
 	}
 }
