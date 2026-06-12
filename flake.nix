@@ -17,6 +17,10 @@
         env.CGO_ENABLED = 0;
         ldflags = [ "-s" "-w" ];
 
+        preCheck = ''
+          go vet ./...
+        '';
+
         meta = with pkgs.lib; {
           description =
             "Nomad task driver for Kata Containers with sandbox-aware VM sharing";
@@ -288,6 +292,8 @@
 
     in {
       packages.${system}.default = driverPkg;
+
+      checks.${system}.default = driverPkg;
 
       apps.${system}.integration-test = {
         type = "app";
