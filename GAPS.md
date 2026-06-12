@@ -43,12 +43,3 @@ Docker-specific concepts that do not map to containerd or Kata.
   driver has `command` and `args` which override the image's process args.
   If neither is set, the image default is used. This matches how
   containerd's OCI spec works.
-
-## Not yet implemented
-
-These could be added if needed.
-
-- **Device passthrough** — Docker's `devices` option maps host devices into
-- **Device passthrough** — Docker's `devices` option maps host devices into
-  the container. Kata supports device passthrough via VFIO but this driver
-  does not yet expose it.

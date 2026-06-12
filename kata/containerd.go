@@ -81,6 +81,7 @@ type ContainerConfig struct {
 	CapDrop          []string
 	Ulimit           map[string]string
 	Labels           map[string]string
+	Devices          []string
 }
 
 type containerdClient struct {
@@ -221,6 +222,17 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 	}
 	if len(cfg.CapDrop) > 0 {
 		specOpts = append(specOpts, oci.WithDroppedCapabilities(cfg.CapDrop))
+	}
+	for _, dev := range cfg.Devices {
+		hostPath, ctrPath, perms := dev, "", "rwm"
+		parts := strings.SplitN(dev, ":", 3)
+		switch len(parts) {
+		case 3:
+			hostPath, ctrPath, perms = parts[0], parts[1], parts[2]
+		case 2:
+			hostPath, ctrPath = parts[0], parts[1]
+		}
+		specOpts = append(specOpts, oci.WithDevices(hostPath, ctrPath, perms))
 	}
 	for name, value := range cfg.Ulimit {
 		parts := strings.SplitN(value, ":", 2)

@@ -48,6 +48,7 @@ type TaskConfig struct {
 	CapAdd     []string          `codec:"cap_add"`
 	CapDrop    []string          `codec:"cap_drop"`
 	ExtraHosts []string          `codec:"extra_hosts"`
+	Devices    []string          `codec:"devices"`
 	Auth       TaskAuth          `codec:"auth"`
 	Ulimit     map[string]string `codec:"ulimit"`
 	Labels     map[string]string `codec:"labels"`
@@ -112,4 +113,5 @@ var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"readonly_rootfs": hclspec.NewAttr("readonly_rootfs", "bool", false),
 	"hostname": hclspec.NewAttr("hostname", "string", false),
 	"extra_hosts": hclspec.NewAttr("extra_hosts", "list(string)", false),
+	"devices":   hclspec.NewAttr("devices", "list(string)", false),
 })

@@ -133,6 +133,7 @@ exact pattern that breaks when using Kata through Nomad's Docker driver
 | `cap_drop`        | list(string)  | no       | Linux capabilities to drop               |
 | `labels`          | map(string)   | no       | Container labels (metadata)              |
 | `extra_hosts`     | list(string)  | no       | Extra /etc/hosts entries (`"host:ip"`)   |
+| `devices`         | list(string)  | no       | Device mappings (`"/dev/foo:/dev/foo:rwm"`) |
 | `auth`            | block         | no       | Registry credentials (`username`, `password`) |
 | `ulimit`          | map(string)   | no       | Resource limits (e.g. `nofile = "1024:65536"`) |
 
