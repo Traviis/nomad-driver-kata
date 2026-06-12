@@ -520,7 +520,6 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 		return nil, fmt.Errorf("task %s not found", taskID)
 	}
 
-	d.logger.Debug("TaskStats called", "task_id", taskID, "container_id", h.containerID, "interval", interval)
 
 	ch := make(chan *drivers.TaskResourceUsage)
 	go func() {
@@ -531,7 +530,6 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 		for {
 			select {
 			case <-ctx.Done():
-				d.logger.Debug("TaskStats context done", "task_id", taskID)
 				return
 			case <-ticker.C:
 				metrics, err := d.ctr.Metrics(ctx, h.containerID)
@@ -539,7 +537,6 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 					d.logger.Warn("failed to read task metrics", "task_id", taskID, "container_id", h.containerID, "error", err)
 					continue
 				}
-				d.logger.Debug("TaskStats collected", "task_id", taskID, "rss", metrics.MemoryRSSBytes, "usage", metrics.MemoryUsageBytes, "cpu_ns", metrics.CPUUsageNanos)
 				usage := metrics.ResourceUsage(previous)
 				previous = metrics
 				ch <- usage

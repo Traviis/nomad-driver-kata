@@ -224,15 +224,8 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 		specOpts = append(specOpts, oci.WithDroppedCapabilities(cfg.CapDrop))
 	}
 	for _, dev := range cfg.Devices {
-		hostPath, ctrPath, perms := dev, "", "rwm"
-		parts := strings.SplitN(dev, ":", 3)
-		switch len(parts) {
-		case 3:
-			hostPath, ctrPath, perms = parts[0], parts[1], parts[2]
-		case 2:
-			hostPath, ctrPath = parts[0], parts[1]
-		}
-		specOpts = append(specOpts, oci.WithDevices(hostPath, ctrPath, perms))
+		host, ctr, perms := parseDevice(dev)
+		specOpts = append(specOpts, oci.WithDevices(host, ctr, perms))
 	}
 	for name, value := range cfg.Ulimit {
 		parts := strings.SplitN(value, ":", 2)
@@ -564,6 +557,19 @@ func (c *containerdClient) GarbageCollect(ctx context.Context, delay time.Durati
 	}
 
 	return removed, nil
+}
+
+func parseDevice(s string) (hostPath, containerPath, permissions string) {
+	hostPath, permissions = s, "rwm"
+	parts := strings.SplitN(s, ":", 3)
+	switch len(parts) {
+	case 3:
+		return parts[0], parts[1], parts[2]
+	case 2:
+		return parts[0], parts[1], permissions
+	default:
+		return
+	}
 }
 
 func parseSignal(name string) syscall.Signal {
