@@ -20,11 +20,11 @@ type Sandbox struct {
 type SandboxManager struct {
 	mu        sync.Mutex
 	sandboxes map[string]*Sandbox
-	ctr       *CtrClient
+	ctr       Containerd
 	logger    hclog.Logger
 }
 
-func NewSandboxManager(ctr *CtrClient, logger hclog.Logger) *SandboxManager {
+func NewSandboxManager(ctr Containerd, logger hclog.Logger) *SandboxManager {
 	return &SandboxManager{
 		sandboxes: make(map[string]*Sandbox),
 		ctr:       ctr,

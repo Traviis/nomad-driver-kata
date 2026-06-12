@@ -4,18 +4,22 @@
   outputs = { self, nixpkgs }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+      pkgs = import nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+      };
 
       driverPkg = pkgs.buildGoModule {
         pname = "nomad-driver-kata";
         version = "0.1.0";
         src = ./.;
-        vendorHash = "sha256-YhToe1MKVYVSqW07rqd5u4GoKHVTSbECSMAq2ew80+A=";
+        vendorHash = "sha256-RplDmsBNxGOkI40eFRXpa/+P01Ap1hk4NhPATZKiU80=";
         env.CGO_ENABLED = 0;
         ldflags = [ "-s" "-w" ];
 
         meta = with pkgs.lib; {
-          description = "Nomad task driver for Kata Containers with sandbox-aware VM sharing";
+          description =
+            "Nomad task driver for Kata Containers with sandbox-aware VM sharing";
           license = licenses.mit;
           platforms = platforms.linux;
         };

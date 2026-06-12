@@ -46,7 +46,7 @@ type Driver struct {
 	logger     hclog.Logger
 	eventer    *eventer.Eventer
 	config     *PluginConfig
-	ctr        *CtrClient
+	ctr        Containerd
 	sandboxMgr *SandboxManager
 	tasks      *taskStore
 	ctx        context.Context
@@ -112,9 +112,6 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	if config.ContainerdAddr == "" {
 		config.ContainerdAddr = defaultContainerdAddr
 	}
-	if config.CtrPath == "" {
-		config.CtrPath = defaultCtrPath
-	}
 	if config.Namespace == "" {
 		config.Namespace = defaultNamespace
 	}
@@ -126,7 +123,12 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	}
 
 	d.config = &config
-	d.ctr = NewCtrClient(config.CtrPath, config.ContainerdAddr, config.Namespace, d.logger)
+
+	ctr, err := NewContainerdClient(config.ContainerdAddr, config.Namespace, d.logger)
+	if err != nil {
+		return fmt.Errorf("connecting to containerd: %w", err)
+	}
+	d.ctr = ctr
 	d.sandboxMgr = NewSandboxManager(d.ctr, d.logger)
 	d.eventer = eventer.NewEventer(d.ctx, d.logger)
 
@@ -601,14 +603,14 @@ func hostsConfig(cfg *drivers.TaskConfig) *drivers.HostsConfig {
 	return cfg.NetworkIsolation.HostsConfig
 }
 
-func buildMounts(cfg *drivers.TaskConfig, resolvPath, hostsPath string) ([]string, error) {
+func buildMounts(cfg *drivers.TaskConfig, resolvPath, hostsPath string) ([]Mount, error) {
 	taskDirs := cfg.TaskDir()
-	mounts := []string{
-		mountString(taskDirs.SharedAllocDir, allocdir.SharedAllocContainerPath, false, ""),
-		mountString(taskDirs.LocalDir, allocdir.TaskLocalContainerPath, false, ""),
-		mountString(taskDirs.SecretsDir, allocdir.TaskSecretsContainerPath, false, ""),
-		mountString(resolvPath, "/etc/resolv.conf", true, "file"),
-		mountString(hostsPath, "/etc/hosts", true, "file"),
+	mounts := []Mount{
+		bindMount(taskDirs.SharedAllocDir, allocdir.SharedAllocContainerPath, false, ""),
+		bindMount(taskDirs.LocalDir, allocdir.TaskLocalContainerPath, false, ""),
+		bindMount(taskDirs.SecretsDir, allocdir.TaskSecretsContainerPath, false, ""),
+		bindMount(resolvPath, "/etc/resolv.conf", true, "file"),
+		bindMount(hostsPath, "/etc/hosts", true, "file"),
 	}
 
 	for _, m := range cfg.Mounts {
@@ -618,12 +620,12 @@ func buildMounts(cfg *drivers.TaskConfig, resolvPath, hostsPath string) ([]strin
 		if m.HostPath == "" || m.TaskPath == "" {
 			return nil, fmt.Errorf("mount requires host path and task path")
 		}
-		mounts = append(mounts, mountString(m.HostPath, m.TaskPath, m.Readonly, m.PropagationMode))
+		mounts = append(mounts, bindMount(m.HostPath, m.TaskPath, m.Readonly, m.PropagationMode))
 	}
 	return mounts, nil
 }
 
-func mountString(src, dst string, readonly bool, propagation string) string {
+func bindMount(src, dst string, readonly bool, propagation string) Mount {
 	options := []string{"rbind", propagationOption(propagation)}
 	if propagation == "file" {
 		options = []string{"bind"}
@@ -631,7 +633,12 @@ func mountString(src, dst string, readonly bool, propagation string) string {
 	if readonly {
 		options = append(options, "ro")
 	}
-	return fmt.Sprintf("type=bind,src=%s,dst=%s,options=%s", src, dst, strings.Join(options, ":"))
+	return Mount{
+		Source:      src,
+		Destination: dst,
+		Type:        "bind",
+		Options:     options,
+	}
 }
 
 func propagationOption(mode string) string {

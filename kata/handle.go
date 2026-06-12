@@ -3,7 +3,6 @@ package kata
 import (
 	"context"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -17,8 +16,7 @@ type taskHandle struct {
 	allocID     string
 	taskName    string
 
-	ctr    *CtrClient
-	cmd    *exec.Cmd
+	ctr    Containerd
 	logger hclog.Logger
 
 	startedAt   time.Time
@@ -29,35 +27,15 @@ type taskHandle struct {
 	mu     sync.RWMutex
 }
 
-// run starts the containerd task in detached mode, then attaches for log
-// streaming. Blocks until the task exits.
+// run starts the containerd task with IO piped to log files.
+// Blocks until the task exits.
 func (h *taskHandle) run(stdoutPath, stderrPath string) {
 	defer close(h.doneCh)
 
-	ctx := context.Background()
-	if err := h.ctr.StartTaskDetached(ctx, h.containerID); err != nil {
-		h.logger.Error("failed to start task", "error", err)
-		h.setExit(1, err)
-		return
-	}
-
-	h.streamAndWait(stdoutPath, stderrPath)
-}
-
-// monitorRecovered re-attaches to a running task for log streaming after
-// driver restart. Blocks until the task exits.
-func (h *taskHandle) monitorRecovered(stdoutPath, stderrPath string) {
-	defer close(h.doneCh)
-	h.streamAndWait(stdoutPath, stderrPath)
-}
-
-// streamAndWait attaches to the task's stdio and waits for it to exit.
-// Falls back to polling if attach fails (e.g. task already exited).
-func (h *taskHandle) streamAndWait(stdoutPath, stderrPath string) {
 	stdout, stderr, err := h.openLogs(stdoutPath, stderrPath)
 	if err != nil {
 		h.logger.Error("failed to open log files", "error", err)
-		h.waitForExit()
+		h.setExit(1, err)
 		return
 	}
 	if stdout != nil {
@@ -67,42 +45,30 @@ func (h *taskHandle) streamAndWait(stdoutPath, stderrPath string) {
 		defer stderr.Close()
 	}
 
-	cmd, err := h.ctr.AttachTask(h.containerID, stdout, stderr)
-	if err != nil {
-		h.logger.Warn("failed to attach to task, falling back to polling", "error", err)
-		h.waitForExit()
-		return
-	}
-
-	h.mu.Lock()
-	h.cmd = cmd
-	h.mu.Unlock()
-
-	waitErr := cmd.Wait()
-
-	exitCode := 0
-	if waitErr != nil {
-		if exitErr, ok := waitErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
-
-	h.setExit(exitCode, waitErr)
+	exitCode, err := h.ctr.RunTask(context.Background(), h.containerID, stdout, stderr)
+	h.setExit(exitCode, err)
 }
 
-// waitForExit polls containerd until the task is no longer running.
-func (h *taskHandle) waitForExit() {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+// monitorRecovered re-attaches to a running task for log streaming after
+// driver restart. Blocks until the task exits.
+func (h *taskHandle) monitorRecovered(stdoutPath, stderrPath string) {
+	defer close(h.doneCh)
 
-	for range ticker.C {
-		if !h.ctr.TaskRunning(context.Background(), h.containerID) {
-			h.setExit(0, nil)
-			return
-		}
+	stdout, stderr, err := h.openLogs(stdoutPath, stderrPath)
+	if err != nil {
+		h.logger.Error("failed to open log files", "error", err)
+		h.setExit(0, nil)
+		return
 	}
+	if stdout != nil {
+		defer stdout.Close()
+	}
+	if stderr != nil {
+		defer stderr.Close()
+	}
+
+	exitCode, err := h.ctr.MonitorTask(context.Background(), h.containerID, stdout, stderr)
+	h.setExit(exitCode, err)
 }
 
 func (h *taskHandle) openLogs(stdoutPath, stderrPath string) (*os.File, *os.File, error) {

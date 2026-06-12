@@ -1,11 +1,12 @@
 package kata
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/containerd/containerd/api/types"
+	v2 "github.com/containerd/cgroups/v3/cgroup2/stats"
+	"github.com/containerd/typeurl/v2"
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
 
@@ -30,59 +31,36 @@ type containerMetrics struct {
 	MemoryMappedBytes   uint64
 }
 
-func (c *CtrClient) Metrics(ctx context.Context, containerID string) (*containerMetrics, error) {
-	out, err := c.run(ctx, "task", "metrics", "--format", "json", containerID)
+func parseMetricProto(metric *types.Metric) (*containerMetrics, error) {
+	data, err := typeurl.UnmarshalAny(metric.Data)
 	if err != nil {
-		return nil, err
-	}
-	return parseContainerMetrics(out, time.Now().UTC())
-}
-
-func parseContainerMetrics(raw string, timestamp time.Time) (*containerMetrics, error) {
-	var data map[string]any
-	if err := json.Unmarshal([]byte(raw), &data); err != nil {
-		return nil, fmt.Errorf("parsing metrics: %w", err)
+		return nil, fmt.Errorf("unmarshaling metrics: %w", err)
 	}
 
-	metrics := &containerMetrics{Timestamp: timestamp}
+	m := &containerMetrics{Timestamp: time.Now().UTC()}
 
-	if cpu, ok := object(data, "cpu"); ok {
-		metrics.CPUUsageNanos = number(cpu, "usage_usec") * 1000
-		metrics.CPUUserNanos = number(cpu, "user_usec") * 1000
-		metrics.CPUSystemNanos = number(cpu, "system_usec") * 1000
-		metrics.ThrottledPeriods = number(cpu, "nr_throttled")
-		metrics.ThrottledTimeNanos = number(cpu, "throttled_usec") * 1000
-
-		if usage, ok := object(cpu, "usage"); ok {
-			metrics.CPUUsageNanos = number(usage, "total")
-			metrics.CPUUserNanos = number(usage, "user")
-			metrics.CPUSystemNanos = number(usage, "kernel")
+	switch stats := data.(type) {
+	case *v2.Metrics:
+		if stats.CPU != nil {
+			m.CPUUsageNanos = stats.CPU.UsageUsec * 1000
+			m.CPUUserNanos = stats.CPU.UserUsec * 1000
+			m.CPUSystemNanos = stats.CPU.SystemUsec * 1000
+			m.ThrottledPeriods = stats.CPU.NrThrottled
+			m.ThrottledTimeNanos = stats.CPU.ThrottledUsec * 1000
 		}
-		if throttling, ok := object(cpu, "throttling"); ok {
-			metrics.ThrottledPeriods = number(throttling, "throttled_periods")
-			metrics.ThrottledTimeNanos = number(throttling, "throttled_time")
+		if stats.Memory != nil {
+			m.MemoryUsageBytes = stats.Memory.Usage
+			m.MemoryMaxUsageBytes = stats.Memory.UsageLimit
+			m.MemorySwapBytes = stats.Memory.SwapUsage
+			m.MemoryRSSBytes = stats.Memory.Anon
+			m.MemoryCacheBytes = stats.Memory.File
+			m.MemoryMappedBytes = stats.Memory.FileMapped
 		}
+	default:
+		return nil, fmt.Errorf("unsupported metrics type: %T", data)
 	}
 
-	if memory, ok := object(data, "memory"); ok {
-		metrics.MemoryUsageBytes = number(memory, "usage")
-		metrics.MemoryMaxUsageBytes = number(memory, "usage_limit")
-		metrics.MemorySwapBytes = number(memory, "swap_usage")
-
-		if usage, ok := object(memory, "usage"); ok {
-			metrics.MemoryUsageBytes = number(usage, "usage")
-			metrics.MemoryMaxUsageBytes = number(usage, "max")
-			if metrics.MemoryMaxUsageBytes == 0 {
-				metrics.MemoryMaxUsageBytes = number(usage, "limit")
-			}
-		}
-		metrics.MemoryRSSBytes = firstNumber(memory, "total_rss", "rss", "anon")
-		metrics.MemoryCacheBytes = firstNumber(memory, "total_cache", "cache", "file")
-		metrics.MemorySwapBytes = firstNumber(memory, "total_swap", "swap", "swap_usage")
-		metrics.MemoryMappedBytes = firstNumber(memory, "total_mapped_file", "mapped_file", "file_mapped")
-	}
-
-	return metrics, nil
+	return m, nil
 }
 
 func (m *containerMetrics) ResourceUsage(previous *containerMetrics) *drivers.TaskResourceUsage {
@@ -114,40 +92,6 @@ func (m *containerMetrics) ResourceUsage(previous *containerMetrics) *drivers.Ta
 			CpuStats:    cpu,
 		},
 		Timestamp: m.Timestamp.UnixNano(),
-	}
-}
-
-func object(data map[string]any, key string) (map[string]any, bool) {
-	value, ok := data[key]
-	if !ok {
-		return nil, false
-	}
-	obj, ok := value.(map[string]any)
-	return obj, ok
-}
-
-func firstNumber(data map[string]any, keys ...string) uint64 {
-	for _, key := range keys {
-		if value := number(data, key); value != 0 {
-			return value
-		}
-	}
-	return 0
-}
-
-func number(data map[string]any, key string) uint64 {
-	value, ok := data[key]
-	if !ok {
-		return 0
-	}
-	switch v := value.(type) {
-	case float64:
-		return uint64(v)
-	case json.Number:
-		n, _ := v.Int64()
-		return uint64(n)
-	default:
-		return 0
 	}
 }
 

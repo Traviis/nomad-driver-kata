@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/nomad/drivers/shared/eventer"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
@@ -15,6 +16,21 @@ import (
 func testDriver() *Driver {
 	d := NewDriver(hclog.NewNullLogger()).(*Driver)
 	return d
+}
+
+func testDriverWithRecorder() (*Driver, *recorder) {
+	rec := newRecorder()
+	d := NewDriver(hclog.NewNullLogger()).(*Driver)
+	d.ctr = rec
+	d.config = &PluginConfig{
+		ContainerdAddr: "/test.sock",
+		Namespace:      defaultNamespace,
+		PauseImage:     defaultPauseImage,
+		Runtime:        defaultRuntime,
+	}
+	d.sandboxMgr = NewSandboxManager(rec, d.logger)
+	d.eventer = eventer.NewEventer(d.ctx, d.logger)
+	return d, rec
 }
 
 func TestCapabilities(t *testing.T) {
@@ -170,27 +186,34 @@ func TestWriteHostsWithHostname(t *testing.T) {
 	}
 }
 
-func TestMountString(t *testing.T) {
+func TestBindMount(t *testing.T) {
 	tests := []struct {
 		name        string
 		src, dst    string
 		readonly    bool
 		propagation string
-		wantSuffix  string
+		wantOpts    string
 	}{
-		{"default", "/src", "/dst", false, "", "options=rbind:rprivate"},
-		{"readonly", "/src", "/dst", true, "", "options=rbind:rprivate:ro"},
-		{"file bind", "/src", "/dst", true, "file", "options=bind:ro"},
-		{"bidirectional", "/src", "/dst", false, "bidirectional", "options=rbind:rshared"},
+		{"default", "/src", "/dst", false, "", "rbind:rprivate"},
+		{"readonly", "/src", "/dst", true, "", "rbind:rprivate:ro"},
+		{"file bind", "/src", "/dst", true, "file", "bind:ro"},
+		{"bidirectional", "/src", "/dst", false, "bidirectional", "rbind:rshared"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mountString(tt.src, tt.dst, tt.readonly, tt.propagation)
-			if !strings.HasPrefix(got, "type=bind,src=/src,dst=/dst,") {
-				t.Errorf("unexpected prefix: %s", got)
+			m := bindMount(tt.src, tt.dst, tt.readonly, tt.propagation)
+			if m.Source != tt.src {
+				t.Errorf("Source = %q, want %q", m.Source, tt.src)
 			}
-			if !strings.HasSuffix(got, tt.wantSuffix) {
-				t.Errorf("mountString() = %q, want suffix %q", got, tt.wantSuffix)
+			if m.Destination != tt.dst {
+				t.Errorf("Destination = %q, want %q", m.Destination, tt.dst)
+			}
+			if m.Type != "bind" {
+				t.Errorf("Type = %q, want %q", m.Type, "bind")
+			}
+			got := strings.Join(m.Options, ":")
+			if got != tt.wantOpts {
+				t.Errorf("Options = %q, want %q", got, tt.wantOpts)
 			}
 		})
 	}
@@ -252,5 +275,184 @@ func TestAddPortEnvWithPorts(t *testing.T) {
 	}
 	if !has("NOMAD_PORT_grpc=9090") {
 		t.Errorf("missing NOMAD_PORT_grpc=9090 (To=0 should use Value) in %v", got)
+	}
+}
+
+func TestBuildDriverNetworkWithPorts(t *testing.T) {
+	ports := structs.AllocatedPorts{
+		{Label: "http", Value: 8080, To: 80},
+		{Label: "grpc", Value: 9090, To: 0},
+	}
+	cfg := &drivers.TaskConfig{
+		Resources: &drivers.Resources{Ports: &ports},
+	}
+	net := buildDriverNetwork(cfg)
+	if net == nil {
+		t.Fatal("expected non-nil DriverNetwork")
+	}
+	if net.PortMap["http"] != 80 {
+		t.Errorf("PortMap[http] = %d, want 80", net.PortMap["http"])
+	}
+	if net.PortMap["grpc"] != 9090 {
+		t.Errorf("PortMap[grpc] = %d, want 9090", net.PortMap["grpc"])
+	}
+}
+
+func TestBuildDriverNetworkNoPorts(t *testing.T) {
+	cfg := &drivers.TaskConfig{}
+	if net := buildDriverNetwork(cfg); net != nil {
+		t.Errorf("expected nil for no ports, got %+v", net)
+	}
+}
+
+func TestBuildDriverNetworkAutoAdvertise(t *testing.T) {
+	ports := structs.AllocatedPorts{
+		{Label: "http", Value: 8080, To: 80},
+	}
+	cfg := &drivers.TaskConfig{
+		Resources: &drivers.Resources{Ports: &ports},
+		NetworkIsolation: &drivers.NetworkIsolationSpec{
+			HostsConfig: &drivers.HostsConfig{
+				Address:  "172.26.64.5",
+				Hostname: "myapp",
+			},
+		},
+	}
+	net := buildDriverNetwork(cfg)
+	if net == nil {
+		t.Fatal("expected non-nil DriverNetwork")
+	}
+	if net.IP != "172.26.64.5" {
+		t.Errorf("IP = %q, want %q", net.IP, "172.26.64.5")
+	}
+	if !net.AutoAdvertise {
+		t.Error("AutoAdvertise should be true when IP is set")
+	}
+}
+
+func TestBuildMountsStandard(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &drivers.TaskConfig{
+		AllocDir: dir,
+		Name:     "web",
+	}
+
+	mounts, err := buildMounts(cfg, filepath.Join(dir, "resolv.conf"), filepath.Join(dir, "hosts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(mounts) != 5 {
+		t.Fatalf("expected 5 mounts, got %d", len(mounts))
+	}
+
+	for _, dst := range []string{"/alloc", "/local", "/secrets", "/etc/resolv.conf", "/etc/hosts"} {
+		found := false
+		for _, m := range mounts {
+			if m.Destination == dst {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing mount for dst=%s", dst)
+		}
+	}
+}
+
+func TestBuildMountsWithCustom(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &drivers.TaskConfig{
+		AllocDir: dir,
+		Name:     "web",
+		Mounts: []*drivers.MountConfig{
+			{HostPath: "/data/db", TaskPath: "/var/lib/db", Readonly: false},
+		},
+	}
+
+	mounts, err := buildMounts(cfg, "/tmp/resolv.conf", "/tmp/hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(mounts) != 6 {
+		t.Fatalf("expected 6 mounts, got %d", len(mounts))
+	}
+
+	found := false
+	for _, m := range mounts {
+		if m.Destination == "/var/lib/db" && m.Source == "/data/db" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("custom mount not found")
+	}
+}
+
+func TestBuildMountsRejectsEmptyPath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &drivers.TaskConfig{
+		AllocDir: dir,
+		Name:     "web",
+		Mounts: []*drivers.MountConfig{
+			{HostPath: "", TaskPath: "/dst"},
+		},
+	}
+
+	_, err := buildMounts(cfg, "/tmp/resolv.conf", "/tmp/hosts")
+	if err == nil {
+		t.Error("expected error for empty host path")
+	}
+}
+
+func TestHostsConfigNil(t *testing.T) {
+	cfg := &drivers.TaskConfig{}
+	if got := hostsConfig(cfg); got != nil {
+		t.Errorf("expected nil, got %+v", got)
+	}
+}
+
+func TestHostsConfigPresent(t *testing.T) {
+	want := &drivers.HostsConfig{
+		Address:  "10.0.0.1",
+		Hostname: "myhost",
+	}
+	cfg := &drivers.TaskConfig{
+		NetworkIsolation: &drivers.NetworkIsolationSpec{
+			HostsConfig: want,
+		},
+	}
+	got := hostsConfig(cfg)
+	if got != want {
+		t.Errorf("hostsConfig() = %+v, want %+v", got, want)
+	}
+}
+
+func TestBuildFingerprintNotConfigured(t *testing.T) {
+	d := testDriver()
+	fp := d.buildFingerprint()
+	if fp.Health != drivers.HealthStateUndetected {
+		t.Errorf("Health = %v, want HealthStateUndetected", fp.Health)
+	}
+}
+
+func TestBuildFingerprintHealthy(t *testing.T) {
+	d, _ := testDriverWithRecorder()
+	fp := d.buildFingerprint()
+	if fp.Health != drivers.HealthStateHealthy {
+		t.Errorf("Health = %v, want HealthStateHealthy", fp.Health)
+	}
+}
+
+func TestBuildFingerprintUnhealthy(t *testing.T) {
+	d := testDriver()
+	rec := newRecorder()
+	rec.versionErr = fmt.Errorf("connection refused")
+	d.ctr = rec
+
+	fp := d.buildFingerprint()
+	if fp.Health != drivers.HealthStateUnhealthy {
+		t.Errorf("Health = %v, want HealthStateUnhealthy", fp.Health)
 	}
 }
