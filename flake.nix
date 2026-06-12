@@ -39,7 +39,7 @@
 
       apps.${system}.integration-test = {
         type = "app";
-        program = "${integrationTest}/bin/kata-driver-test";
+        program = pkgs.lib.getExe integrationTest;
         meta.description = "Integration test requiring root and KVM";
       };
 

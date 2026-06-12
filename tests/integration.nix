@@ -37,11 +37,10 @@ let
 
     plugin_dir = "/tmp/kata-driver-test/plugins"
 
-    plugin "kata" {
+    plugin "nomad-driver-kata" {
       config {
         containerd_addr = "/tmp/kata-driver-test/containerd.sock"
         namespace       = "default"
-        pause_image     = "registry.k8s.io/pause:3.9"
         runtime         = "io.containerd.kata.v2"
       }
     }
@@ -60,7 +59,6 @@ let
             image       = "docker.io/library/busybox:latest"
             command     = "sh"
             args        = ["-c", "echo KATA_DRIVER_OK && cat /proc/version && sleep 60"]
-            hostname    = "kata-test-host"
             extra_hosts = ["mydb:10.0.0.5", "cache:10.0.0.6"]
           }
 
@@ -80,9 +78,9 @@ let
 
           config {
             image      = "docker.io/library/busybox:latest"
-            command    = "sh"
-            args       = ["-c", "echo SIDECAR_OK && sleep 3600"]
             pids_limit = 256
+            command    = "sh"
+            args       = ["-c", "echo SIDECAR_OK; sleep 3600"]
           }
 
           resources {
@@ -107,21 +105,60 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   NOMAD_ADDR="http://127.0.0.1:4646"
   export NOMAD_ADDR
 
+  remove_testdir() {
+    if [ ! -e "$TESTDIR" ]; then
+      echo "[OK] no previous test directory"
+      return
+    fi
+
+    echo "Removing previous test directory: $TESTDIR"
+    while IFS= read -r mountpoint; do
+      case "$mountpoint" in
+        "$TESTDIR"/*)
+          echo "Unmounting leftover mount: $mountpoint"
+          ${pkgs.util-linux}/bin/umount -l "$mountpoint" >/dev/null 2>&1 || true
+          ;;
+      esac
+    done < <(${pkgs.util-linux}/bin/findmnt --kernel --list --noheadings --output TARGET 2>/dev/null || true)
+
+    if rm -rf "$TESTDIR"; then
+      echo "[OK] removed previous test directory"
+    else
+      echo "[FAIL] failed to remove previous test directory: $TESTDIR"
+      return 1
+    fi
+  }
+
   cleanup() {
+    set +e
     echo ""
     echo "=== Cleaning up ==="
-    # Stop nomad
+
+    if [ -f "$TESTDIR/nomad.pid" ]; then
+      ${pkgs.nomad}/bin/nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
+      sleep 3
+    fi
+
+    if [ -S "$CONTAINERD_SOCK" ]; then
+      for task in $(${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" task ls -q 2>/dev/null); do
+        ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" task kill "$task" >/dev/null 2>&1 || true
+        ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" task rm "$task" >/dev/null 2>&1 || true
+      done
+      for container in $(${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" container ls -q 2>/dev/null); do
+        ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" container rm "$container" >/dev/null 2>&1 || true
+      done
+    fi
+
     if [ -f "$TESTDIR/nomad.pid" ]; then
       kill "$(cat "$TESTDIR/nomad.pid")" 2>/dev/null || true
+      wait "$(cat "$TESTDIR/nomad.pid")" 2>/dev/null || true
     fi
-    # Stop containerd
     if [ -f "$TESTDIR/containerd.pid" ]; then
       kill "$(cat "$TESTDIR/containerd.pid")" 2>/dev/null || true
+      wait "$(cat "$TESTDIR/containerd.pid")" 2>/dev/null || true
     fi
-    # Clean up containers
-    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" task kill kata-driver-test 2>/dev/null || true
-    sleep 2
-    rm -rf "$TESTDIR"
+
+    remove_testdir
     echo "Done."
   }
   trap cleanup EXIT
@@ -130,8 +167,10 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   echo ""
 
   # Prep dirs
-  rm -rf "$TESTDIR"
+  echo "Preparing test directory..."
+  remove_testdir
   mkdir -p "$TESTDIR"/{containerd,run,nomad,plugins}
+  echo "[OK] test directory ready: $TESTDIR"
 
   # Symlink plugin binary
   ln -sf ${driverPkg}/bin/nomad-driver-kata "$TESTDIR/plugins/nomad-driver-kata"
@@ -163,9 +202,8 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   }
   echo "[OK] containerd running"
 
-  # Pre-pull images so Nomad doesn't timeout
+  # Pre-pull task image so Nomad doesn't timeout
   echo "Pulling images..."
-  ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull registry.k8s.io/pause:3.9 >/dev/null
   ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull docker.io/library/busybox:latest >/dev/null
   echo "[OK] images cached"
 
@@ -259,10 +297,10 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   echo "=== Exec verification ==="
   EXEC_HOSTNAME=$(${pkgs.nomad}/bin/nomad alloc exec -task hello "$ALLOC_ID" hostname 2>/dev/null || echo "")
   echo "Hostname from exec: $EXEC_HOSTNAME"
-  if echo "$EXEC_HOSTNAME" | grep -q "kata-test-host"; then
-    echo "[OK] hostname config applied"
+  if echo "$EXEC_HOSTNAME" | grep -q "test"; then
+    echo "[OK] shared sandbox hostname applied"
   else
-    echo "[FAIL] expected hostname 'kata-test-host', got '$EXEC_HOSTNAME'"
+    echo "[FAIL] expected shared sandbox hostname 'test', got '$EXEC_HOSTNAME'"
     exit 1
   fi
 
@@ -279,13 +317,17 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   # Signal test
   echo ""
   echo "=== Signal verification ==="
-  ${pkgs.nomad}/bin/nomad alloc signal -task sidecar "$ALLOC_ID" SIGUSR1 2>/dev/null || true
+  ${pkgs.nomad}/bin/nomad alloc signal -s SIGCONT -task sidecar "$ALLOC_ID" 2>/dev/null || {
+    echo "[FAIL] nomad alloc signal failed"
+    exit 1
+  }
   sleep 1
   SIDECAR_STATE=$(${pkgs.nomad}/bin/nomad alloc status -json "$ALLOC_ID" | ${pkgs.jq}/bin/jq -r '.TaskStates.sidecar.State')
   if [ "$SIDECAR_STATE" = "running" ]; then
-    echo "[OK] sidecar survived SIGUSR1 signal"
+    echo "[OK] sidecar survived SIGCONT signal"
   else
     echo "[FAIL] sidecar state after signal: $SIDECAR_STATE"
+    ${pkgs.nomad}/bin/nomad alloc status "$ALLOC_ID" 2>/dev/null || true
     exit 1
   fi
 
@@ -296,20 +338,16 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   echo "Kata shim processes: $SHIM_COUNT"
   if [ "$SHIM_COUNT" -eq 1 ]; then
     echo "[OK] Single VM — both tasks share one Kata sandbox"
-  elif [ "$SHIM_COUNT" -eq 0 ]; then
-    echo "[INFO] No shim processes (Kata may use built-in Dragonball VMM)"
-    TASK_STATES=$(${pkgs.nomad}/bin/nomad alloc status -json "$ALLOC_ID" | ${pkgs.jq}/bin/jq -r '.TaskStates | to_entries[] | "\(.key): \(.value.State)"')
-    echo "$TASK_STATES"
   else
-    echo "[WARN] $SHIM_COUNT shim processes — tasks may be in separate VMs"
+    echo "[FAIL] expected exactly one Kata shim for shared main+sidecar microVM, got $SHIM_COUNT"
+    echo "Task states:"
+    ${pkgs.nomad}/bin/nomad alloc status -json "$ALLOC_ID" | ${pkgs.jq}/bin/jq -r '.TaskStates | to_entries[] | "\(.key): \(.value.State)"' 2>/dev/null || true
+    echo "Shim processes:"
+    ps aux | grep containerd-shim-kata-v2 | grep -v grep || true
+    exit 1
   fi
 
   echo ""
   echo "=== Integration test passed ==="
-  echo "Job left running. Inspect with:"
-  echo "  NOMAD_ADDR=$NOMAD_ADDR nomad alloc status $ALLOC_ID"
-  echo "  NOMAD_ADDR=$NOMAD_ADDR nomad alloc logs $ALLOC_ID hello"
-  echo ""
-  echo "Press Enter to tear down, or Ctrl-C to keep running."
-  read -r
+  echo "Allocation tested: $ALLOC_ID"
 ''
