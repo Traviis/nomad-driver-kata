@@ -21,10 +21,12 @@ func testDriver() *Driver {
 	return d
 }
 
-func testDriverWithRecorder() (*Driver, *recorder) {
+func testDriverWithRecorder(t *testing.T) (*Driver, *recorder) {
+	t.Helper()
 	rec := newRecorder()
 	d := NewDriver(hclog.NewNullLogger()).(*Driver)
 	d.ctr = rec
+	d.stateDir = t.TempDir()
 	d.config = &PluginConfig{
 		ContainerdAddr: "/test.sock",
 		Namespace:      defaultNamespace,
@@ -566,7 +568,7 @@ func TestBuildFingerprintNotConfigured(t *testing.T) {
 }
 
 func TestBuildFingerprintHealthy(t *testing.T) {
-	d, _ := testDriverWithRecorder()
+	d, _ := testDriverWithRecorder(t)
 	fp := d.buildFingerprint()
 	if fp.Health != drivers.HealthStateHealthy {
 		t.Errorf("Health = %v, want HealthStateHealthy", fp.Health)
@@ -586,15 +588,11 @@ func TestBuildFingerprintUnhealthy(t *testing.T) {
 }
 func testTaskConfig(t *testing.T, taskCfg *TaskConfig) *drivers.TaskConfig {
 	t.Helper()
-	dir := t.TempDir()
 	cfg := &drivers.TaskConfig{
 		ID:            "test-task-id",
 		AllocID:       "alloc-1",
 		Name:          "web",
 		TaskGroupName: "group",
-		AllocDir:      dir,
-		StdoutPath:    filepath.Join(dir, "stdout"),
-		StderrPath:    filepath.Join(dir, "stderr"),
 	}
 	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
 		t.Fatalf("encoding driver config: %v", err)
@@ -603,7 +601,7 @@ func testTaskConfig(t *testing.T, taskCfg *TaskConfig) *drivers.TaskConfig {
 }
 
 func TestStartTask(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	handle, _, err := d.StartTask(cfg)
@@ -640,7 +638,7 @@ func TestStartTask(t *testing.T) {
 }
 
 func TestStartTaskPassesOptions(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{
 		Image:          "myapp:v1",
 		Command:        "/bin/server",
@@ -690,7 +688,7 @@ func TestStartTaskPassesOptions(t *testing.T) {
 }
 
 func TestDestroyTask(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -708,7 +706,7 @@ func TestDestroyTask(t *testing.T) {
 		t.Error("expected DeleteContainer call")
 	}
 
-	configDir := taskConfigDir(cfg.AllocID, cfg.Name)
+	configDir := d.taskConfigDir(cfg.AllocID, cfg.Name)
 	if _, err := os.Stat(configDir); err == nil {
 		t.Errorf("config dir should be removed: %s", configDir)
 	}
@@ -779,7 +777,7 @@ func TestParseSignal(t *testing.T) {
 	}
 }
 func TestStopTask(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -796,7 +794,7 @@ func TestStopTask(t *testing.T) {
 }
 
 func TestStopTaskDefaultSignal(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -821,7 +819,7 @@ func TestStopTaskDefaultSignal(t *testing.T) {
 }
 
 func TestWaitTask(t *testing.T) {
-	d, _ := testDriverWithRecorder()
+	d, _ := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -846,7 +844,7 @@ func TestWaitTask(t *testing.T) {
 }
 
 func TestWaitTaskNotFound(t *testing.T) {
-	d, _ := testDriverWithRecorder()
+	d, _ := testDriverWithRecorder(t)
 	_, err := d.WaitTask(context.Background(), "nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown task")
@@ -854,7 +852,7 @@ func TestWaitTaskNotFound(t *testing.T) {
 }
 
 func TestSignalTask(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -879,7 +877,7 @@ func TestSignalTask(t *testing.T) {
 }
 
 func TestExecTask(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -901,7 +899,7 @@ func TestExecTask(t *testing.T) {
 }
 
 func TestRecoverTask(t *testing.T) {
-	d, rec := testDriverWithRecorder()
+	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	containerID := "kata-alloc-1-web"
@@ -933,7 +931,7 @@ func TestRecoverTask(t *testing.T) {
 }
 
 func TestRecoverTaskNotRunning(t *testing.T) {
-	d, _ := testDriverWithRecorder()
+	d, _ := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	state := &TaskState{

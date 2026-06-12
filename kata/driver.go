@@ -50,6 +50,7 @@ type Driver struct {
 	tasks            *taskStore
 	ctx              context.Context
 	cancel           context.CancelFunc
+	stateDir         string
 	imagePullTimeout time.Duration
 }
 
@@ -84,10 +85,11 @@ func (ts *taskStore) Delete(id string) {
 func NewDriver(logger hclog.Logger) drivers.DriverPlugin {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Driver{
-		logger: logger.Named(pluginName),
-		ctx:    ctx,
-		cancel: cancel,
-		tasks:  newTaskStore(),
+		logger:   logger.Named(pluginName),
+		ctx:      ctx,
+		cancel:   cancel,
+		tasks:    newTaskStore(),
+		stateDir: filepath.Join(os.TempDir(), "kata-driver"),
 	}
 }
 
@@ -232,8 +234,8 @@ func (d *Driver) buildFingerprint() *drivers.Fingerprint {
 		HealthDescription: desc,
 	}
 }
-func taskConfigDir(allocID, taskName string) string {
-	return filepath.Join(os.TempDir(), "kata-driver", allocID, taskName)
+func (d *Driver) taskConfigDir(allocID, taskName string) string {
+	return filepath.Join(d.stateDir, allocID, taskName)
 }
 
 
@@ -293,7 +295,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		"io.kubernetes.cri-o.SandboxID":     sandbox.ID,
 	}
 
-	configDir := taskConfigDir(cfg.AllocID, cfg.Name)
+	configDir := d.taskConfigDir(cfg.AllocID, cfg.Name)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, nil, fmt.Errorf("creating config dir: %w", err)
 	}
@@ -500,7 +502,7 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 	_ = d.ctr.DeleteTask(ctx, h.containerID)
 	_ = d.ctr.DeleteContainer(ctx, h.containerID)
 	d.sandboxMgr.Release(ctx, h.allocID)
-	os.RemoveAll(taskConfigDir(h.allocID, h.taskName))
+	os.RemoveAll(d.taskConfigDir(h.allocID, h.taskName))
 	d.tasks.Delete(taskID)
 
 	return nil
