@@ -313,6 +313,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		CPUPeriod:        cpuPeriod,
 		PidsLimit:        taskCfg.PidsLimit,
 		Privileged:       taskCfg.Privileged,
+		ReadonlyRootfs:   taskCfg.ReadonlyRootfs,
 		CapAdd:           taskCfg.CapAdd,
 		CapDrop:          taskCfg.CapDrop,
 		Ulimit:           taskCfg.Ulimit,

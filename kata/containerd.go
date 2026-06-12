@@ -74,6 +74,7 @@ type ContainerConfig struct {
 	CPUPeriod        int64
 	PidsLimit        int64
 	Privileged       bool
+	ReadonlyRootfs   bool
 	CapAdd           []string
 	CapDrop          []string
 	Ulimit           map[string]string
@@ -182,6 +183,9 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 	}
 	if cfg.Privileged {
 		specOpts = append(specOpts, oci.WithPrivileged)
+	}
+	if cfg.ReadonlyRootfs {
+		specOpts = append(specOpts, oci.WithRootFSReadonly())
 	}
 	if len(cfg.Annotations) > 0 {
 		specOpts = append(specOpts, oci.WithAnnotations(cfg.Annotations))
