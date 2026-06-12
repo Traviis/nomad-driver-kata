@@ -23,6 +23,7 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/hashicorp/go-hclog"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"golang.org/x/sys/unix"
 )
 
 // Containerd abstracts containerd operations for the driver.
@@ -573,25 +574,14 @@ func parseDevice(s string) (hostPath, containerPath, permissions string) {
 }
 
 func parseSignal(name string) syscall.Signal {
-	name = strings.TrimPrefix(strings.ToUpper(name), "SIG")
-	switch name {
-	case "HUP":
-		return syscall.SIGHUP
-	case "INT":
-		return syscall.SIGINT
-	case "QUIT":
-		return syscall.SIGQUIT
-	case "KILL":
-		return syscall.SIGKILL
-	case "TERM":
-		return syscall.SIGTERM
-	case "USR1":
-		return syscall.SIGUSR1
-	case "USR2":
-		return syscall.SIGUSR2
-	default:
-		return syscall.SIGTERM
+	name = strings.ToUpper(name)
+	if !strings.HasPrefix(name, "SIG") {
+		name = "SIG" + name
 	}
+	if sig := unix.SignalNum(name); sig != 0 {
+		return sig
+	}
+	return syscall.SIGTERM
 }
 
 // --- Docker auth ---
