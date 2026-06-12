@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
@@ -30,6 +31,7 @@ func testDriverWithRecorder() (*Driver, *recorder) {
 	}
 	d.sandboxMgr = NewSandboxManager(rec, d.logger)
 	d.eventer = eventer.NewEventer(d.ctx, d.logger)
+	d.imagePullTimeout = 5 * time.Minute
 	return d, rec
 }
 
@@ -578,5 +580,165 @@ func TestBuildFingerprintUnhealthy(t *testing.T) {
 	fp := d.buildFingerprint()
 	if fp.Health != drivers.HealthStateUnhealthy {
 		t.Errorf("Health = %v, want HealthStateUnhealthy", fp.Health)
+	}
+}
+func testTaskConfig(t *testing.T, taskCfg *TaskConfig) *drivers.TaskConfig {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := &drivers.TaskConfig{
+		ID:            "test-task-id",
+		AllocID:       "alloc-1",
+		Name:          "web",
+		TaskGroupName: "group",
+		AllocDir:      dir,
+		StdoutPath:    filepath.Join(dir, "stdout"),
+		StderrPath:    filepath.Join(dir, "stderr"),
+	}
+	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
+		t.Fatalf("encoding driver config: %v", err)
+	}
+	return cfg
+}
+
+func TestStartTask(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	handle, _, err := d.StartTask(cfg)
+	if err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	if handle == nil {
+		t.Fatal("expected non-nil handle")
+	}
+
+	if !rec.called("Cleanup") {
+		t.Error("expected Cleanup call for previous state")
+	}
+	if !rec.called("EnsureImage") {
+		t.Error("expected EnsureImage call")
+	}
+	if !rec.called("CreateContainer") {
+		t.Error("expected CreateContainer call")
+	}
+
+	cc := rec.lastConfig()
+	if cc == nil {
+		t.Fatal("no ContainerConfig recorded")
+	}
+	if cc.Image != "alpine:latest" {
+		t.Errorf("Image = %q, want %q", cc.Image, "alpine:latest")
+	}
+	if cc.Runtime != defaultRuntime {
+		t.Errorf("Runtime = %q, want %q", cc.Runtime, defaultRuntime)
+	}
+	if cc.ID != "kata-alloc-1-web" {
+		t.Errorf("container ID = %q, want %q", cc.ID, "kata-alloc-1-web")
+	}
+}
+
+func TestStartTaskPassesOptions(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{
+		Image:          "myapp:v1",
+		Command:        "/bin/server",
+		Args:           []string{"--port", "8080"},
+		Hostname:       "myhost",
+		Privileged:     true,
+		ReadonlyRootfs: true,
+		PidsLimit:      100,
+		CapAdd:         []string{"NET_ADMIN"},
+		CapDrop:        []string{"MKNOD"},
+		Devices:        []string{"/dev/fuse"},
+		Labels:         map[string]string{"env": "test"},
+	})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	cc := rec.lastConfig()
+	if cc.Hostname != "myhost" {
+		t.Errorf("Hostname = %q, want %q", cc.Hostname, "myhost")
+	}
+	if !cc.Privileged {
+		t.Error("Privileged should be true")
+	}
+	if !cc.ReadonlyRootfs {
+		t.Error("ReadonlyRootfs should be true")
+	}
+	if cc.PidsLimit != 100 {
+		t.Errorf("PidsLimit = %d, want 100", cc.PidsLimit)
+	}
+	if len(cc.CapAdd) != 1 || cc.CapAdd[0] != "NET_ADMIN" {
+		t.Errorf("CapAdd = %v, want [NET_ADMIN]", cc.CapAdd)
+	}
+	if len(cc.CapDrop) != 1 || cc.CapDrop[0] != "MKNOD" {
+		t.Errorf("CapDrop = %v, want [MKNOD]", cc.CapDrop)
+	}
+	if len(cc.Devices) != 1 || cc.Devices[0] != "/dev/fuse" {
+		t.Errorf("Devices = %v, want [/dev/fuse]", cc.Devices)
+	}
+	if cc.Labels["env"] != "test" {
+		t.Errorf("Labels[env] = %q, want %q", cc.Labels["env"], "test")
+	}
+	if len(cc.Command) != 3 || cc.Command[0] != "/bin/server" {
+		t.Errorf("Command = %v, want [/bin/server --port 8080]", cc.Command)
+	}
+}
+
+func TestDestroyTask(t *testing.T) {
+	d, rec := testDriverWithRecorder()
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	if err := d.DestroyTask(cfg.ID, true); err != nil {
+		t.Fatalf("DestroyTask: %v", err)
+	}
+
+	if !rec.called("DeleteTask") {
+		t.Error("expected DeleteTask call")
+	}
+	if !rec.called("DeleteContainer") {
+		t.Error("expected DeleteContainer call")
+	}
+
+	configDir := taskConfigDir(cfg.AllocID, cfg.Name)
+	if _, err := os.Stat(configDir); err == nil {
+		t.Errorf("config dir should be removed: %s", configDir)
+	}
+
+	if _, ok := d.tasks.Get(cfg.ID); ok {
+		t.Error("task should be removed from store")
+	}
+}
+
+func TestParseDevice(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantHost  string
+		wantCtr   string
+		wantPerms string
+	}{
+		{"/dev/fuse", "/dev/fuse", "", "rwm"},
+		{"/dev/fuse:/dev/fuse", "/dev/fuse", "/dev/fuse", "rwm"},
+		{"/dev/sda:/dev/xvda:r", "/dev/sda", "/dev/xvda", "r"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			host, ctr, perms := parseDevice(tt.input)
+			if host != tt.wantHost {
+				t.Errorf("host = %q, want %q", host, tt.wantHost)
+			}
+			if ctr != tt.wantCtr {
+				t.Errorf("container = %q, want %q", ctr, tt.wantCtr)
+			}
+			if perms != tt.wantPerms {
+				t.Errorf("perms = %q, want %q", perms, tt.wantPerms)
+			}
+		})
 	}
 }
