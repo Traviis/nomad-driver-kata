@@ -14,6 +14,11 @@ These cannot be closed — they follow from running inside a microVM.
   kernel. Host-mode networking is not possible; all networking goes through
   a bridged CNI namespace. Use Nomad's `bridge` network mode.
 
+- **Per-task hostnames** — Docker can give each task/container its own
+  hostname. This driver runs all tasks in a Nomad task group inside one Kata
+  sandbox, so `hostname` inside the guest resolves to the shared sandbox
+  hostname rather than a per-task value.
+
 - **Host PID/IPC namespace** — Same reason: the VM has its own PID and IPC
   namespaces. `pid_mode = "host"` and `ipc_mode = "host"` are not
   supported.

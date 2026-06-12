@@ -85,7 +85,7 @@ kata/
   sandbox.go         Kata VM lifecycle management.
                      - SandboxManager: maintains a map from allocation
                        ID to Sandbox. Each sandbox is a Kata microVM
-                       running the pause image.
+                       created through containerd's sandbox API.
                      - GetOrCreate: boots a new VM for the first task
                        in an allocation, reuses it for subsequent tasks
                        (reference counted)
@@ -128,11 +128,10 @@ kata/
 ## Key concepts
 
 **One VM per allocation.** When the first task in a Nomad allocation
-starts, the driver boots a Kata microVM (the "sandbox") using a pause
-container. All subsequent tasks in the same allocation run as containers
-inside that VM. This mirrors how Kubernetes pods work with Kata. The
-sandbox is identified by CRI-O annotations that tell the Kata shim
-which VM to place the container in.
+starts, the driver creates a containerd sandbox backed by Kata. All
+subsequent tasks in the same allocation are created with that sandbox ID
+using containerd's native sandbox relationship, so the Kata shim places
+them in the same microVM.
 
 **Interface-based containerd access.** The `Containerd` interface in
 `containerd.go` is the boundary between driver logic and the container
