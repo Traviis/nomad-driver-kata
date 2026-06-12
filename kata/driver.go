@@ -308,6 +308,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		Mounts:           mounts,
 		User:             cfg.User,
 		Cwd:              taskCfg.Cwd,
+		Hostname:         taskCfg.Hostname,
 		MemoryLimitBytes: memLimit,
 		CPUQuota:         cpuQuota,
 		CPUPeriod:        cpuPeriod,

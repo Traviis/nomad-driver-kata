@@ -38,6 +38,7 @@ type TaskConfig struct {
 	Command    string            `codec:"command"`
 	Args       []string          `codec:"args"`
 	Cwd        string            `codec:"cwd"`
+	Hostname   string            `codec:"hostname"`
 	ForcePull  bool              `codec:"force_pull"`
 	Privileged      bool              `codec:"privileged"`
 	ReadonlyRootfs  bool              `codec:"readonly_rootfs"`
@@ -98,4 +99,5 @@ var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"cap_drop":  hclspec.NewAttr("cap_drop", "list(string)", false),
 	"labels":   hclspec.NewAttr("labels", "map(string)", false),
 	"readonly_rootfs": hclspec.NewAttr("readonly_rootfs", "bool", false),
+	"hostname": hclspec.NewAttr("hostname", "string", false),
 })
