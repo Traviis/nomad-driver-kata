@@ -35,7 +35,7 @@ Nomad Allocation
 ### Nix
 
 ```bash
-nix build github:trickfire/nomad-driver-kata
+nix build github:Traviis/nomad-driver-kata
 ```
 
 The binary lands at `result/bin/nomad-driver-kata`. Copy it to your
@@ -44,7 +44,7 @@ Nomad plugin directory.
 ### From source
 
 ```bash
-git clone https://github.com/trickfire/nomad-driver-kata
+git clone https://github.com/Traviis/nomad-driver-kata
 cd nomad-driver-kata
 nix build  # or: go build -o nomad-driver-kata .
 ```
@@ -144,6 +144,20 @@ cd nomad-driver-kata
 nix develop
 go build -o nomad-driver-kata .
 go test ./...
+```
+
+## Testing
+
+You can run the unit tests with:
+```bash
+nix flake check
+# or
+go test ./...
+```
+
+Integration tests with:
+```bash
+sudo nix run .#integration-test
 ```
 
 ## License
