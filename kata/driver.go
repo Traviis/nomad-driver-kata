@@ -232,6 +232,10 @@ func (d *Driver) buildFingerprint() *drivers.Fingerprint {
 		HealthDescription: desc,
 	}
 }
+func taskConfigDir(allocID, taskName string) string {
+	return filepath.Join(os.TempDir(), "kata-driver", allocID, taskName)
+}
+
 
 func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
 	if cfg.AllocID == "" {
@@ -265,11 +269,16 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox setup: %w", err)
 	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			d.sandboxMgr.Release(ctx, cfg.AllocID)
+		}
+	}()
 
 	pullCtx, pullCancel := context.WithTimeout(ctx, d.imagePullTimeout)
 	defer pullCancel()
 	if err := d.ctr.EnsureImage(pullCtx, taskCfg.Image, taskCfg.ForcePull, taskCfg.Auth.Username, taskCfg.Auth.Password); err != nil {
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("pulling image %s: %w", taskCfg.Image, err)
 	}
 
@@ -284,21 +293,18 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		"io.kubernetes.cri-o.SandboxID":     sandbox.ID,
 	}
 
-	configDir := filepath.Join(os.TempDir(), "kata-driver", cfg.AllocID, cfg.Name)
+	configDir := taskConfigDir(cfg.AllocID, cfg.Name)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("creating config dir: %w", err)
 	}
 
 	resolvPath := filepath.Join(configDir, "resolv.conf")
 	if err := d.writeResolvConf(resolvPath, cfg.DNS); err != nil {
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("writing resolv.conf: %w", err)
 	}
 
 	hostsPath := filepath.Join(configDir, "hosts")
 	if err := d.writeHosts(hostsPath, hostsConfig(cfg), taskCfg.ExtraHosts); err != nil {
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("writing hosts: %w", err)
 	}
 
@@ -316,7 +322,6 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	mounts, err := buildMounts(cfg, resolvPath, hostsPath)
 	if err != nil {
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("building mounts: %w", err)
 	}
 
@@ -352,7 +357,6 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		Labels:           taskCfg.Labels,
 		Devices:          taskCfg.Devices,
 	}); err != nil {
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("creating container: %w", err)
 	}
 
@@ -383,10 +387,10 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	handle.Config = cfg
 	if err := handle.SetDriverState(state); err != nil {
 		d.ctr.Cleanup(ctx, containerID)
-		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("setting driver state: %w", err)
 	}
 
+	succeeded = true
 	return handle, buildDriverNetwork(cfg), nil
 }
 
@@ -496,8 +500,7 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 	_ = d.ctr.DeleteTask(ctx, h.containerID)
 	_ = d.ctr.DeleteContainer(ctx, h.containerID)
 	d.sandboxMgr.Release(ctx, h.allocID)
-	configDir := filepath.Join(os.TempDir(), "kata-driver", h.allocID, h.taskName)
-	os.RemoveAll(configDir)
+	os.RemoveAll(taskConfigDir(h.allocID, h.taskName))
 	d.tasks.Delete(taskID)
 
 	return nil
