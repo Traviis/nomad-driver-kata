@@ -28,7 +28,6 @@ Nomad Allocation
 - Linux with KVM (x86_64)
 - containerd with `containerd-shim-kata-v2` in PATH
 - Kata Containers runtime + guest assets (kernel, rootfs)
-- `ctr` binary available (comes with containerd)
 - Nomad 1.10+
 
 ## Installation
@@ -58,8 +57,6 @@ plugin "kata" {
     # Path to the containerd socket
     containerd_addr = "/run/docker/containerd/containerd.sock"
 
-    # Path to the ctr binary
-    ctr_path = "/run/current-system/sw/bin/ctr"
 
     # containerd namespace
     namespace = "default"

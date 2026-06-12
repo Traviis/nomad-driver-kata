@@ -9,7 +9,6 @@ const (
 	pluginVersion = "0.1.0"
 
 	defaultContainerdAddr = "/run/docker/containerd/containerd.sock"
-	defaultCtrPath        = "/run/current-system/sw/bin/ctr"
 	defaultNamespace      = "default"
 	defaultPauseImage     = "registry.k8s.io/pause:3.9"
 	defaultRuntime        = "io.containerd.kata.v2"
@@ -20,7 +19,6 @@ const (
 // PluginConfig holds driver-level settings from the Nomad client config.
 type PluginConfig struct {
 	ContainerdAddr string `codec:"containerd_addr"`
-	CtrPath        string `codec:"ctr_path"`
 	Namespace      string `codec:"namespace"`
 	PauseImage     string `codec:"pause_image"`
 	Runtime        string `codec:"runtime"`
@@ -57,10 +55,6 @@ var pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"containerd_addr": hclspec.NewDefault(
 		hclspec.NewAttr("containerd_addr", "string", false),
 		hclspec.NewLiteral(`"`+defaultContainerdAddr+`"`),
-	),
-	"ctr_path": hclspec.NewDefault(
-		hclspec.NewAttr("ctr_path", "string", false),
-		hclspec.NewLiteral(`"`+defaultCtrPath+`"`),
 	),
 	"namespace": hclspec.NewDefault(
 		hclspec.NewAttr("namespace", "string", false),

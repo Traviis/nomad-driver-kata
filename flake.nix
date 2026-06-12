@@ -64,7 +64,6 @@
         plugin "kata" {
           config {
             containerd_addr = "/tmp/kata-driver-test/containerd.sock"
-            ctr_path        = "${pkgs.containerd}/bin/ctr"
             namespace       = "default"
             pause_image     = "registry.k8s.io/pause:3.9"
             runtime         = "io.containerd.kata.v2"

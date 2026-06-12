@@ -17,12 +17,6 @@ in {
       description = "Path to the containerd socket.";
     };
 
-    ctrPath = lib.mkOption {
-      type = lib.types.str;
-      default = "/run/current-system/sw/bin/ctr";
-      description = "Path to the ctr binary.";
-    };
-
     namespace = lib.mkOption {
       type = lib.types.str;
       default = "default";
@@ -54,7 +48,6 @@ in {
       plugin."kata" = {
         config = {
           containerd_addr = cfg.containerdAddr;
-          ctr_path = cfg.ctrPath;
           namespace = cfg.namespace;
           pause_image = cfg.pauseImage;
           runtime = cfg.runtime;
