@@ -117,9 +117,6 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	if config.Namespace == "" {
 		config.Namespace = defaultNamespace
 	}
-	if config.PauseImage == "" {
-		config.PauseImage = defaultPauseImage
-	}
 	if config.Runtime == "" {
 		config.Runtime = defaultRuntime
 	}
@@ -238,7 +235,6 @@ func (d *Driver) taskConfigDir(allocID, taskName string) string {
 	return filepath.Join(d.stateDir, allocID, taskName)
 }
 
-
 func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
 	if cfg.AllocID == "" {
 		return nil, nil, fmt.Errorf("alloc ID is required")
@@ -267,7 +263,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		d.logger.Info("using network namespace", "path", netNS)
 	}
 
-	sandbox, err := d.sandboxMgr.GetOrCreate(ctx, cfg.AllocID, d.config.PauseImage, d.config.Runtime, netNS, cfg.TaskGroupName)
+	sandbox, err := d.sandboxMgr.GetOrCreate(ctx, cfg.AllocID, d.config.Runtime, netNS, cfg.TaskGroupName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox setup: %w", err)
 	}
@@ -290,10 +286,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		command = append(command, taskCfg.Args...)
 	}
 
-	annotations := map[string]string{
-		"io.kubernetes.cri-o.ContainerType": "container",
-		"io.kubernetes.cri-o.SandboxID":     sandbox.ID,
-	}
+	annotations := map[string]string{}
 
 	configDir := d.taskConfigDir(cfg.AllocID, cfg.Name)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -341,6 +334,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		Image:            taskCfg.Image,
 		Runtime:          d.config.Runtime,
 		Annotations:      annotations,
+		SandboxID:        sandbox.ID,
 		Command:          command,
 		Env:              envVars,
 		Mounts:           mounts,
@@ -521,7 +515,6 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 	if !ok {
 		return nil, fmt.Errorf("task %s not found", taskID)
 	}
-
 
 	ch := make(chan *drivers.TaskResourceUsage)
 	go func() {

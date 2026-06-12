@@ -30,7 +30,6 @@ func testDriverWithRecorder(t *testing.T) (*Driver, *recorder) {
 	d.config = &PluginConfig{
 		ContainerdAddr: "/test.sock",
 		Namespace:      defaultNamespace,
-		PauseImage:     defaultPauseImage,
 		Runtime:        defaultRuntime,
 	}
 	d.sandboxMgr = NewSandboxManager(rec, d.logger)
@@ -655,6 +654,14 @@ func TestStartTaskPassesOptions(t *testing.T) {
 
 	if _, _, err := d.StartTask(cfg); err != nil {
 		t.Fatalf("StartTask: %v", err)
+	}
+
+	sandbox := rec.lastSandboxConfig()
+	if sandbox == nil {
+		t.Fatal("no SandboxConfig recorded")
+	}
+	if sandbox.Hostname != cfg.TaskGroupName {
+		t.Errorf("sandbox Hostname = %q, want %q", sandbox.Hostname, cfg.TaskGroupName)
 	}
 
 	cc := rec.lastConfig()

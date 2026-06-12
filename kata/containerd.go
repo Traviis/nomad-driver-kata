@@ -33,6 +33,9 @@ type Containerd interface {
 	Version(ctx context.Context) (string, error)
 
 	EnsureImage(ctx context.Context, ref string, forcePull bool, username, password string) error
+	CreateSandbox(ctx context.Context, cfg *SandboxConfig) error
+	StartSandbox(ctx context.Context, id string) error
+	DeleteSandbox(ctx context.Context, id string) error
 	CreateContainer(ctx context.Context, cfg *ContainerConfig) error
 	DeleteContainer(ctx context.Context, id string) error
 
@@ -60,12 +63,21 @@ type Mount struct {
 	Options     []string
 }
 
+// SandboxConfig holds parameters for creating a containerd sandbox.
+type SandboxConfig struct {
+	ID       string
+	Runtime  string
+	NetNS    string
+	Hostname string
+}
+
 // ContainerConfig holds parameters for creating a containerd container.
 type ContainerConfig struct {
 	ID               string
 	Image            string
 	Runtime          string
 	Annotations      map[string]string
+	SandboxID        string
 	Command          []string
 	NetNS            string
 	Env              []string
@@ -154,6 +166,50 @@ func (c *containerdClient) EnsureImage(ctx context.Context, ref string, forcePul
 
 	_, err := c.client.Pull(ctx, ref, pullOpts...)
 	return err
+}
+
+func (c *containerdClient) CreateSandbox(ctx context.Context, cfg *SandboxConfig) error {
+	ctx = c.nsCtx(ctx)
+
+	specOpts := []oci.SpecOpts{
+		oci.WithDefaultSpec(),
+	}
+	if cfg.Hostname != "" {
+		specOpts = append(specOpts, oci.WithHostname(cfg.Hostname))
+	}
+	if cfg.NetNS != "" {
+		specOpts = append(specOpts, oci.WithLinuxNamespace(specs.LinuxNamespace{
+			Type: specs.NetworkNamespace,
+			Path: cfg.NetNS,
+		}))
+	}
+
+	_, err := c.client.NewSandbox(ctx, cfg.ID,
+		containerd.WithSandboxRuntime(cfg.Runtime, nil),
+		containerd.WithSandboxSpec(&oci.Spec{}, specOpts...),
+	)
+	return err
+}
+
+func (c *containerdClient) StartSandbox(ctx context.Context, id string) error {
+	ctx = c.nsCtx(ctx)
+	sandbox, err := c.client.LoadSandbox(ctx, id)
+	if err != nil {
+		return err
+	}
+	return sandbox.Start(ctx)
+}
+
+func (c *containerdClient) DeleteSandbox(ctx context.Context, id string) error {
+	ctx = c.nsCtx(ctx)
+	sandbox, err := c.client.LoadSandbox(ctx, id)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	return sandbox.Shutdown(ctx)
 }
 
 func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerConfig) error {
@@ -258,6 +314,9 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 		containerd.WithNewSnapshot(cfg.ID, image),
 		containerd.WithRuntime(cfg.Runtime, nil),
 		containerd.WithNewSpec(specOpts...),
+	}
+	if cfg.SandboxID != "" {
+		containerOpts = append(containerOpts, containerd.WithSandbox(cfg.SandboxID))
 	}
 	if len(cfg.Labels) > 0 {
 		containerOpts = append(containerOpts, containerd.WithContainerLabels(cfg.Labels))

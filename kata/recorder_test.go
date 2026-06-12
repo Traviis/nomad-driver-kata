@@ -14,14 +14,15 @@ type call struct {
 }
 
 type recorder struct {
-	mu         sync.Mutex
-	calls      []call
-	version    string
-	versionErr error
-	running    map[string]bool
-	metrics    *containerMetrics
-	runExit    int
-	configs    []*ContainerConfig
+	mu             sync.Mutex
+	calls          []call
+	version        string
+	versionErr     error
+	running        map[string]bool
+	metrics        *containerMetrics
+	runExit        int
+	configs        []*ContainerConfig
+	sandboxConfigs []*SandboxConfig
 }
 
 func newRecorder() *recorder {
@@ -69,6 +70,26 @@ func (r *recorder) lastConfig() *ContainerConfig {
 	return r.configs[len(r.configs)-1]
 }
 
+func (r *recorder) configForID(id string) *ContainerConfig {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, cfg := range r.configs {
+		if cfg.ID == id {
+			return cfg
+		}
+	}
+	return nil
+}
+
+func (r *recorder) lastSandboxConfig() *SandboxConfig {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.sandboxConfigs) == 0 {
+		return nil
+	}
+	return r.sandboxConfigs[len(r.sandboxConfigs)-1]
+}
+
 func (r *recorder) Close() error { return nil }
 
 func (r *recorder) Version(ctx context.Context) (string, error) {
@@ -81,6 +102,30 @@ func (r *recorder) Version(ctx context.Context) (string, error) {
 
 func (r *recorder) EnsureImage(ctx context.Context, ref string, forcePull bool, username, password string) error {
 	r.record("EnsureImage", ref, forcePull, username, password)
+	return nil
+}
+
+func (r *recorder) CreateSandbox(ctx context.Context, cfg *SandboxConfig) error {
+	r.mu.Lock()
+	r.sandboxConfigs = append(r.sandboxConfigs, cfg)
+	r.mu.Unlock()
+	r.record("CreateSandbox", cfg.ID, cfg.Runtime)
+	return nil
+}
+
+func (r *recorder) StartSandbox(ctx context.Context, id string) error {
+	r.record("StartSandbox", id)
+	r.mu.Lock()
+	r.running[id] = true
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *recorder) DeleteSandbox(ctx context.Context, id string) error {
+	r.record("DeleteSandbox", id)
+	r.mu.Lock()
+	delete(r.running, id)
+	r.mu.Unlock()
 	return nil
 }
 

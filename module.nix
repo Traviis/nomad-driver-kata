@@ -23,12 +23,6 @@ in {
       description = "containerd namespace for Kata containers.";
     };
 
-    pauseImage = lib.mkOption {
-      type = lib.types.str;
-      default = "registry.k8s.io/pause:3.9";
-      description = "OCI image used for sandbox containers.";
-    };
-
     runtime = lib.mkOption {
       type = lib.types.str;
       default = "io.containerd.kata.v2";
@@ -45,11 +39,10 @@ in {
     services.nomad.settings = {
       plugin_dir = "/opt/nomad/plugins";
 
-      plugin."kata" = {
+      plugin."nomad-driver-kata" = {
         config = {
           containerd_addr = cfg.containerdAddr;
           namespace = cfg.namespace;
-          pause_image = cfg.pauseImage;
           runtime = cfg.runtime;
         };
       };
