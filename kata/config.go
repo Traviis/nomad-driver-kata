@@ -41,6 +41,8 @@ type TaskConfig struct {
 	ForcePull  bool              `codec:"force_pull"`
 	Privileged bool              `codec:"privileged"`
 	PidsLimit  int64             `codec:"pids_limit"`
+	CapAdd     []string          `codec:"cap_add"`
+	CapDrop    []string          `codec:"cap_drop"`
 	Auth       TaskAuth          `codec:"auth"`
 	Ulimit     map[string]string `codec:"ulimit"`
 }
@@ -88,6 +90,8 @@ var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		"username": hclspec.NewAttr("username", "string", false),
 		"password": hclspec.NewAttr("password", "string", false),
 	})),
-	"ulimit": hclspec.NewAttr("ulimit", "map(string)", false),
+	"ulimit":    hclspec.NewAttr("ulimit", "map(string)", false),
 	"pids_limit": hclspec.NewAttr("pids_limit", "number", false),
+	"cap_add":   hclspec.NewAttr("cap_add", "list(string)", false),
+	"cap_drop":  hclspec.NewAttr("cap_drop", "list(string)", false),
 })

@@ -74,6 +74,8 @@ type ContainerConfig struct {
 	CPUPeriod        int64
 	PidsLimit        int64
 	Privileged       bool
+	CapAdd           []string
+	CapDrop          []string
 	Ulimit           map[string]string
 }
 
@@ -206,6 +208,12 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 	}
 	if cfg.PidsLimit > 0 {
 		specOpts = append(specOpts, oci.WithPidsLimit(cfg.PidsLimit))
+	}
+	if len(cfg.CapAdd) > 0 {
+		specOpts = append(specOpts, oci.WithAddedCapabilities(cfg.CapAdd))
+	}
+	if len(cfg.CapDrop) > 0 {
+		specOpts = append(specOpts, oci.WithDroppedCapabilities(cfg.CapDrop))
 	}
 	for name, value := range cfg.Ulimit {
 		parts := strings.SplitN(value, ":", 2)

@@ -313,6 +313,8 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		CPUPeriod:        cpuPeriod,
 		PidsLimit:        taskCfg.PidsLimit,
 		Privileged:       taskCfg.Privileged,
+		CapAdd:           taskCfg.CapAdd,
+		CapDrop:          taskCfg.CapDrop,
 		Ulimit:           taskCfg.Ulimit,
 	}); err != nil {
 		d.sandboxMgr.Release(ctx, cfg.AllocID)
