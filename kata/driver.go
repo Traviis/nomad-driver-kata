@@ -311,6 +311,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		MemoryLimitBytes: memLimit,
 		CPUQuota:         cpuQuota,
 		CPUPeriod:        cpuPeriod,
+		PidsLimit:        taskCfg.PidsLimit,
 		Privileged:       taskCfg.Privileged,
 		Ulimit:           taskCfg.Ulimit,
 	}); err != nil {

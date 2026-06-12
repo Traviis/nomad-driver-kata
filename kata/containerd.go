@@ -72,6 +72,7 @@ type ContainerConfig struct {
 	MemoryLimitBytes int64
 	CPUQuota         int64
 	CPUPeriod        int64
+	PidsLimit        int64
 	Privileged       bool
 	Ulimit           map[string]string
 }
@@ -202,6 +203,9 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 	}
 	if cfg.CPUQuota > 0 && cfg.CPUPeriod > 0 {
 		specOpts = append(specOpts, oci.WithCPUCFS(cfg.CPUQuota, uint64(cfg.CPUPeriod)))
+	}
+	if cfg.PidsLimit > 0 {
+		specOpts = append(specOpts, oci.WithPidsLimit(cfg.PidsLimit))
 	}
 	for name, value := range cfg.Ulimit {
 		parts := strings.SplitN(value, ":", 2)
