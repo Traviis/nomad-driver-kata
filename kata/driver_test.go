@@ -141,6 +141,107 @@ func TestWriteResolvConfLoopbackFallback(t *testing.T) {
 	}
 }
 
+func TestFilterResolvConf(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantReal bool
+		wantHas  []string
+		wantNot  []string
+	}{
+		{
+			name:     "real servers kept",
+			input:    "nameserver 10.0.0.1\nnameserver 10.0.0.2\nsearch example.com\n",
+			wantReal: true,
+			wantHas:  []string{"nameserver 10.0.0.1", "nameserver 10.0.0.2", "search example.com"},
+		},
+		{
+			name:     "ipv4 loopback filtered",
+			input:    "nameserver 127.0.0.53\nsearch example.com\n",
+			wantReal: false,
+			wantHas:  []string{"search example.com"},
+			wantNot:  []string{"127.0.0.53"},
+		},
+		{
+			name:     "ipv6 loopback filtered",
+			input:    "nameserver ::1\nsearch example.com\n",
+			wantReal: false,
+			wantHas:  []string{"search example.com"},
+			wantNot:  []string{"::1"},
+		},
+		{
+			name:     "mixed keeps real only",
+			input:    "nameserver 127.0.0.1\nnameserver 10.0.0.1\n",
+			wantReal: true,
+			wantHas:  []string{"nameserver 10.0.0.1"},
+			wantNot:  []string{"127.0.0.1"},
+		},
+		{
+			name:     "comments stripped",
+			input:    "# comment\nnameserver 10.0.0.1\n",
+			wantReal: true,
+			wantHas:  []string{"nameserver 10.0.0.1"},
+			wantNot:  []string{"# comment"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines, hasReal := filterResolvConf([]byte(tt.input))
+			if hasReal != tt.wantReal {
+				t.Errorf("hasReal = %v, want %v", hasReal, tt.wantReal)
+			}
+			content := strings.Join(lines, "\n")
+			for _, want := range tt.wantHas {
+				if !strings.Contains(content, want) {
+					t.Errorf("missing %q in:\n%s", want, content)
+				}
+			}
+			for _, notWant := range tt.wantNot {
+				if strings.Contains(content, notWant) {
+					t.Errorf("should not contain %q in:\n%s", notWant, content)
+				}
+			}
+		})
+	}
+}
+
+func TestHostResolvConfFallback(t *testing.T) {
+	dir := t.TempDir()
+
+	primary := filepath.Join(dir, "resolv.conf")
+	os.WriteFile(primary, []byte("nameserver 127.0.0.53\nsearch local\n"), 0644)
+
+	fallback := filepath.Join(dir, "upstream-resolv.conf")
+	os.WriteFile(fallback, []byte("nameserver 192.168.1.1\nsearch example.com\n"), 0644)
+
+	lines := hostResolvConf([]string{primary, fallback})
+	content := strings.Join(lines, "\n")
+
+	if strings.Contains(content, "127.0.0.53") {
+		t.Errorf("should not contain stub resolver:\n%s", content)
+	}
+	if !strings.Contains(content, "192.168.1.1") {
+		t.Errorf("should contain upstream server:\n%s", content)
+	}
+	if !strings.Contains(content, "search example.com") {
+		t.Errorf("should contain upstream search domain:\n%s", content)
+	}
+}
+
+func TestHostResolvConfAllLoopback(t *testing.T) {
+	dir := t.TempDir()
+
+	stub := filepath.Join(dir, "resolv.conf")
+	os.WriteFile(stub, []byte("nameserver 127.0.0.53\n"), 0644)
+
+	lines := hostResolvConf([]string{stub, filepath.Join(dir, "nonexistent")})
+	content := strings.Join(lines, "\n")
+
+	if !strings.Contains(content, "8.8.8.8") {
+		t.Errorf("should fall back to public DNS:\n%s", content)
+	}
+}
+
 func TestWriteHosts(t *testing.T) {
 	d := testDriver()
 	path := filepath.Join(t.TempDir(), "hosts")

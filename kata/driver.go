@@ -560,29 +560,43 @@ func (d *Driver) writeResolvConf(path string, dns *drivers.DNSConfig) error {
 			lines = append(lines, "options "+strings.Join(dns.Options, " "))
 		}
 	} else {
-		data, err := os.ReadFile("/etc/resolv.conf")
-		if err != nil {
-			lines = append(lines, "nameserver 8.8.8.8", "nameserver 1.1.1.1")
-		} else {
-			hasNonLoopback := false
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "nameserver") {
-					fields := strings.Fields(line)
-					if len(fields) >= 2 && !strings.HasPrefix(fields[1], "127.") {
-						lines = append(lines, line)
-						hasNonLoopback = true
-					}
-				} else if line != "" && !strings.HasPrefix(line, "#") {
-					lines = append(lines, line)
-				}
-			}
-			if !hasNonLoopback {
-				lines = append([]string{"nameserver 8.8.8.8", "nameserver 1.1.1.1"}, lines...)
-			}
-		}
+		lines = hostResolvConf([]string{"/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"})
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+
+func hostResolvConf(paths []string) []string {
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		lines, hasReal := filterResolvConf(data)
+		if hasReal {
+			return lines
+		}
+	}
+	return []string{"nameserver 8.8.8.8", "nameserver 1.1.1.1"}
+}
+
+func filterResolvConf(data []byte) (lines []string, hasReal bool) {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "nameserver") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && !isLoopback(fields[1]) {
+				lines = append(lines, line)
+				hasReal = true
+			}
+		} else if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return
+}
+
+func isLoopback(addr string) bool {
+	return strings.HasPrefix(addr, "127.") || addr == "::1"
 }
 
 func (d *Driver) writeHosts(path string, hosts *drivers.HostsConfig) error {
