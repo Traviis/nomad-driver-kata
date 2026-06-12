@@ -13,7 +13,7 @@ const (
 	defaultPauseImage        = "registry.k8s.io/pause:3.9"
 	defaultRuntime           = "io.containerd.kata.v2"
 	defaultImagePullTimeout  = "5m"
-
+	defaultGCImageDelay      = "3m"
 	taskHandleVersion = 1
 )
 
@@ -24,6 +24,8 @@ type PluginConfig struct {
 	PauseImage       string `codec:"pause_image"`
 	Runtime          string `codec:"runtime"`
 	ImagePullTimeout string `codec:"image_pull_timeout"`
+	GCImage          bool   `codec:"gc_image"`
+	GCImageDelay     string `codec:"gc_image_delay"`
 }
 
 // TaskAuth holds credentials for pulling from private registries.
@@ -80,6 +82,14 @@ var pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"image_pull_timeout": hclspec.NewDefault(
 		hclspec.NewAttr("image_pull_timeout", "string", false),
 		hclspec.NewLiteral(`"`+defaultImagePullTimeout+`"`),
+	),
+	"gc_image": hclspec.NewDefault(
+		hclspec.NewAttr("gc_image", "bool", false),
+		hclspec.NewLiteral(`true`),
+	),
+	"gc_image_delay": hclspec.NewDefault(
+		hclspec.NewAttr("gc_image_delay", "string", false),
+		hclspec.NewLiteral(`"`+defaultGCImageDelay+`"`),
 	),
 })
 

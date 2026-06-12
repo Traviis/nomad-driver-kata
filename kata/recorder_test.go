@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 )
 
 type call struct {
@@ -153,4 +154,9 @@ func (r *recorder) Cleanup(ctx context.Context, id string) {
 	r.mu.Lock()
 	delete(r.running, id)
 	r.mu.Unlock()
+}
+
+func (r *recorder) GarbageCollect(ctx context.Context, delay time.Duration) (int, error) {
+	r.record("GarbageCollect", delay)
+	return 0, nil
 }

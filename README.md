@@ -59,6 +59,13 @@ plugin "kata" {
 
     # Timeout for pulling container images (default: "5m")
     image_pull_timeout = "5m"
+
+    # Enable image garbage collection (default: true)
+    gc_image = true
+
+    # Minimum age before an unused image is removed (default: "3m")
+    gc_image_delay = "3m"
+
     # containerd namespace
     namespace = "default"
 
@@ -117,6 +124,7 @@ exact pattern that breaks when using Kata through Nomad's Docker driver
 | `command`         | string        | no       | Override entrypoint                      |
 | `args`            | list(string)  | no       | Arguments to command                     |
 | `cwd`             | string        | no       | Working directory inside the container   |
+| `hostname`        | string        | no       | Container hostname                       |
 | `force_pull`      | bool          | no       | Always pull the image, even if cached    |
 | `privileged`      | bool          | no       | Run container in privileged mode         |
 | `readonly_rootfs` | bool          | no       | Mount the root filesystem as read-only   |
@@ -124,6 +132,7 @@ exact pattern that breaks when using Kata through Nomad's Docker driver
 | `cap_add`         | list(string)  | no       | Linux capabilities to add                |
 | `cap_drop`        | list(string)  | no       | Linux capabilities to drop               |
 | `labels`          | map(string)   | no       | Container labels (metadata)              |
+| `extra_hosts`     | list(string)  | no       | Extra /etc/hosts entries (`"host:ip"`)   |
 | `auth`            | block         | no       | Registry credentials (`username`, `password`) |
 | `ulimit`          | map(string)   | no       | Resource limits (e.g. `nofile = "1024:65536"`) |
 

@@ -48,18 +48,7 @@ Docker-specific concepts that do not map to containerd or Kata.
 
 These could be added if needed.
 
-- **Image garbage collection** — Docker's driver periodically removes
-  unused images (`gc { image = true; image_delay = "3m" }`). This driver
-  does not. Images accumulate in containerd's image store on the host. Use
-  `ctr images rm` or a cron job to reclaim space.
-
-- **`extra_hosts`** — Additional `/etc/hosts` entries beyond what Nomad
-  provides. The driver writes a hosts file from Nomad's config; arbitrary
-  extra entries are not yet supported.
-
-- **`hostname`** — The `ContainerConfig` supports it internally but it is
-  not yet exposed in the task config HCL spec.
-
+- **Device passthrough** — Docker's `devices` option maps host devices into
 - **Device passthrough** — Docker's `devices` option maps host devices into
   the container. Kata supports device passthrough via VFIO but this driver
   does not yet expose it.

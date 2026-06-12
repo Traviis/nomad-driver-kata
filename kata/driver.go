@@ -130,6 +130,15 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 		return fmt.Errorf("parsing image_pull_timeout %q: %w", pullTimeout, err)
 	}
 
+	gcImageDelay := config.GCImageDelay
+	if gcImageDelay == "" {
+		gcImageDelay = defaultGCImageDelay
+	}
+	gcDelay, err := time.ParseDuration(gcImageDelay)
+	if err != nil {
+		return fmt.Errorf("parsing gc_image_delay %q: %w", gcImageDelay, err)
+	}
+
 	d.config = &config
 	d.imagePullTimeout = dur
 
@@ -141,7 +150,29 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	d.sandboxMgr = NewSandboxManager(d.ctr, d.logger)
 	d.eventer = eventer.NewEventer(d.ctx, d.logger)
 
+	if config.GCImage {
+		go d.imageGC(d.ctx, gcDelay)
+	}
+
 	return nil
+}
+
+func (d *Driver) imageGC(ctx context.Context, delay time.Duration) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := d.ctr.GarbageCollect(ctx, delay)
+			if err != nil {
+				d.logger.Warn("image GC failed", "error", err)
+			} else if n > 0 {
+				d.logger.Info("image GC removed images", "count", n)
+			}
+		}
+	}
 }
 
 // --- drivers.DriverPlugin ---

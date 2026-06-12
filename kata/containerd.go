@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/containers"
@@ -46,6 +47,7 @@ type Containerd interface {
 
 	Metrics(ctx context.Context, id string) (*containerMetrics, error)
 	Cleanup(ctx context.Context, id string)
+	GarbageCollect(ctx context.Context, delay time.Duration) (int, error)
 }
 
 // Mount describes a bind mount for a container.
@@ -508,6 +510,48 @@ func (c *containerdClient) Cleanup(ctx context.Context, id string) {
 	_ = c.KillTask(ctx, id, "SIGKILL")
 	_ = c.DeleteTask(ctx, id)
 	_ = c.DeleteContainer(ctx, id)
+}
+
+func (c *containerdClient) GarbageCollect(ctx context.Context, delay time.Duration) (int, error) {
+	ctx = c.nsCtx(ctx)
+
+	ctrs, err := c.client.Containers(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("listing containers: %w", err)
+	}
+
+	usedImages := make(map[string]bool)
+	for _, ctr := range ctrs {
+		img, err := ctr.Image(ctx)
+		if err == nil {
+			usedImages[img.Name()] = true
+		}
+	}
+
+	imgs, err := c.client.ListImages(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("listing images: %w", err)
+	}
+
+	cutoff := time.Now().Add(-delay)
+	removed := 0
+	for _, img := range imgs {
+		if usedImages[img.Name()] {
+			continue
+		}
+		meta := img.Metadata()
+		if meta.UpdatedAt.After(cutoff) {
+			continue
+		}
+		if err := c.client.ImageService().Delete(ctx, img.Name()); err != nil {
+			c.logger.Warn("failed to remove image", "image", img.Name(), "error", err)
+			continue
+		}
+		c.logger.Info("removed unused image", "image", img.Name())
+		removed++
+	}
+
+	return removed, nil
 }
 
 func parseSignal(name string) syscall.Signal {
