@@ -85,9 +85,11 @@
               driver = "kata"
 
               config {
-                image   = "docker.io/library/busybox:latest"
-                command = "sh"
-                args    = ["-c", "echo KATA_DRIVER_OK && cat /proc/version && sleep 30"]
+                image       = "docker.io/library/busybox:latest"
+                command     = "sh"
+                args        = ["-c", "echo KATA_DRIVER_OK && cat /proc/version && sleep 60"]
+                hostname    = "kata-test-host"
+                extra_hosts = ["mydb:10.0.0.5", "cache:10.0.0.6"]
               }
 
               resources {
@@ -105,9 +107,10 @@
               }
 
               config {
-                image   = "docker.io/library/busybox:latest"
-                command = "sh"
-                args    = ["-c", "echo SIDECAR_OK && sleep 3600"]
+                image      = "docker.io/library/busybox:latest"
+                command    = "sh"
+                args       = ["-c", "echo SIDECAR_OK && sleep 3600"]
+                pids_limit = 256
               }
 
               resources {
@@ -259,10 +262,60 @@
         echo ""
         echo "=== Task logs ==="
         echo "--- hello ---"
-        ${pkgs.nomad}/bin/nomad alloc logs "$ALLOC_ID" hello 2>/dev/null || echo "(no logs yet)"
+        HELLO_LOGS=$(${pkgs.nomad}/bin/nomad alloc logs "$ALLOC_ID" hello 2>/dev/null || echo "")
+        echo "$HELLO_LOGS"
+        if echo "$HELLO_LOGS" | grep -q "KATA_DRIVER_OK"; then
+          echo "[OK] hello task produced expected output"
+        else
+          echo "[FAIL] hello task missing KATA_DRIVER_OK in logs"
+          exit 1
+        fi
+
         echo ""
         echo "--- sidecar ---"
-        ${pkgs.nomad}/bin/nomad alloc logs "$ALLOC_ID" sidecar 2>/dev/null || echo "(no logs yet)"
+        SIDECAR_LOGS=$(${pkgs.nomad}/bin/nomad alloc logs "$ALLOC_ID" sidecar 2>/dev/null || echo "")
+        echo "$SIDECAR_LOGS"
+        if echo "$SIDECAR_LOGS" | grep -q "SIDECAR_OK"; then
+          echo "[OK] sidecar task produced expected output"
+        else
+          echo "[FAIL] sidecar task missing SIDECAR_OK in logs"
+          exit 1
+        fi
+
+        # Exec into container
+        echo ""
+        echo "=== Exec verification ==="
+        EXEC_HOSTNAME=$(${pkgs.nomad}/bin/nomad alloc exec -task hello "$ALLOC_ID" hostname 2>/dev/null || echo "")
+        echo "Hostname from exec: $EXEC_HOSTNAME"
+        if echo "$EXEC_HOSTNAME" | grep -q "kata-test-host"; then
+          echo "[OK] hostname config applied"
+        else
+          echo "[FAIL] expected hostname 'kata-test-host', got '$EXEC_HOSTNAME'"
+          exit 1
+        fi
+
+        EXEC_HOSTS=$(${pkgs.nomad}/bin/nomad alloc exec -task hello "$ALLOC_ID" cat /etc/hosts 2>/dev/null || echo "")
+        echo "Hosts file:"
+        echo "$EXEC_HOSTS"
+        if echo "$EXEC_HOSTS" | grep -q "mydb" && echo "$EXEC_HOSTS" | grep -q "cache"; then
+          echo "[OK] extra_hosts entries present"
+        else
+          echo "[FAIL] extra_hosts entries missing from /etc/hosts"
+          exit 1
+        fi
+
+        # Signal test
+        echo ""
+        echo "=== Signal verification ==="
+        ${pkgs.nomad}/bin/nomad alloc signal -task sidecar "$ALLOC_ID" SIGUSR1 2>/dev/null || true
+        sleep 1
+        SIDECAR_STATE=$(${pkgs.nomad}/bin/nomad alloc status -json "$ALLOC_ID" | ${pkgs.jq}/bin/jq -r '.TaskStates.sidecar.State')
+        if [ "$SIDECAR_STATE" = "running" ]; then
+          echo "[OK] sidecar survived SIGUSR1 signal"
+        else
+          echo "[FAIL] sidecar state after signal: $SIDECAR_STATE"
+          exit 1
+        fi
 
         # Check kata shim count
         echo ""
@@ -273,7 +326,6 @@
           echo "[OK] Single VM — both tasks share one Kata sandbox"
         elif [ "$SHIM_COUNT" -eq 0 ]; then
           echo "[INFO] No shim processes (Kata may use built-in Dragonball VMM)"
-          echo "Checking if both tasks are running..."
           TASK_STATES=$(${pkgs.nomad}/bin/nomad alloc status -json "$ALLOC_ID" | ${pkgs.jq}/bin/jq -r '.TaskStates | to_entries[] | "\(.key): \(.value.State)"')
           echo "$TASK_STATES"
         else
@@ -281,7 +333,7 @@
         fi
 
         echo ""
-        echo "=== Test complete ==="
+        echo "=== Integration test passed ==="
         echo "Job left running. Inspect with:"
         echo "  NOMAD_ADDR=$NOMAD_ADDR nomad alloc status $ALLOC_ID"
         echo "  NOMAD_ADDR=$NOMAD_ADDR nomad alloc logs $ALLOC_ID hello"
