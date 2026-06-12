@@ -57,7 +57,8 @@ plugin "kata" {
     # Path to the containerd socket
     containerd_addr = "/run/docker/containerd/containerd.sock"
 
-
+    # Timeout for pulling container images (default: "5m")
+    image_pull_timeout = "5m"
     # containerd namespace
     namespace = "default"
 

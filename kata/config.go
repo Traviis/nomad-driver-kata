@@ -8,20 +8,22 @@ const (
 	pluginName    = "kata"
 	pluginVersion = "0.1.0"
 
-	defaultContainerdAddr = "/run/docker/containerd/containerd.sock"
-	defaultNamespace      = "default"
-	defaultPauseImage     = "registry.k8s.io/pause:3.9"
-	defaultRuntime        = "io.containerd.kata.v2"
+	defaultContainerdAddr    = "/run/docker/containerd/containerd.sock"
+	defaultNamespace         = "default"
+	defaultPauseImage        = "registry.k8s.io/pause:3.9"
+	defaultRuntime           = "io.containerd.kata.v2"
+	defaultImagePullTimeout  = "5m"
 
 	taskHandleVersion = 1
 )
 
 // PluginConfig holds driver-level settings from the Nomad client config.
 type PluginConfig struct {
-	ContainerdAddr string `codec:"containerd_addr"`
-	Namespace      string `codec:"namespace"`
-	PauseImage     string `codec:"pause_image"`
-	Runtime        string `codec:"runtime"`
+	ContainerdAddr   string `codec:"containerd_addr"`
+	Namespace        string `codec:"namespace"`
+	PauseImage       string `codec:"pause_image"`
+	Runtime          string `codec:"runtime"`
+	ImagePullTimeout string `codec:"image_pull_timeout"`
 }
 
 // TaskAuth holds credentials for pulling from private registries.
@@ -67,6 +69,10 @@ var pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"runtime": hclspec.NewDefault(
 		hclspec.NewAttr("runtime", "string", false),
 		hclspec.NewLiteral(`"`+defaultRuntime+`"`),
+	),
+	"image_pull_timeout": hclspec.NewDefault(
+		hclspec.NewAttr("image_pull_timeout", "string", false),
+		hclspec.NewLiteral(`"`+defaultImagePullTimeout+`"`),
 	),
 })
 

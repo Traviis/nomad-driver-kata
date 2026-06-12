@@ -41,16 +41,16 @@ var (
 	}
 )
 
-// Driver implements drivers.DriverPlugin for Kata Containers.
 type Driver struct {
-	logger     hclog.Logger
-	eventer    *eventer.Eventer
-	config     *PluginConfig
-	ctr        Containerd
-	sandboxMgr *SandboxManager
-	tasks      *taskStore
-	ctx        context.Context
-	cancel     context.CancelFunc
+	logger           hclog.Logger
+	eventer          *eventer.Eventer
+	config           *PluginConfig
+	ctr              Containerd
+	sandboxMgr       *SandboxManager
+	tasks            *taskStore
+	ctx              context.Context
+	cancel           context.CancelFunc
+	imagePullTimeout time.Duration
 }
 
 type taskStore struct {
@@ -121,8 +121,17 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	if config.Runtime == "" {
 		config.Runtime = defaultRuntime
 	}
+	pullTimeout := config.ImagePullTimeout
+	if pullTimeout == "" {
+		pullTimeout = defaultImagePullTimeout
+	}
+	dur, err := time.ParseDuration(pullTimeout)
+	if err != nil {
+		return fmt.Errorf("parsing image_pull_timeout %q: %w", pullTimeout, err)
+	}
 
 	d.config = &config
+	d.imagePullTimeout = dur
 
 	ctr, err := NewContainerdClient(config.ContainerdAddr, config.Namespace, d.logger)
 	if err != nil {
@@ -226,7 +235,9 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("sandbox setup: %w", err)
 	}
 
-	if err := d.ctr.EnsureImage(ctx, taskCfg.Image, taskCfg.ForcePull, taskCfg.Auth.Username, taskCfg.Auth.Password); err != nil {
+	pullCtx, pullCancel := context.WithTimeout(ctx, d.imagePullTimeout)
+	defer pullCancel()
+	if err := d.ctr.EnsureImage(pullCtx, taskCfg.Image, taskCfg.ForcePull, taskCfg.Auth.Username, taskCfg.Auth.Password); err != nil {
 		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("pulling image %s: %w", taskCfg.Image, err)
 	}
