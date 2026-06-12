@@ -77,6 +77,7 @@ type ContainerConfig struct {
 	CapAdd           []string
 	CapDrop          []string
 	Ulimit           map[string]string
+	Labels           map[string]string
 }
 
 type containerdClient struct {
@@ -238,6 +239,9 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 		containerd.WithNewSnapshot(cfg.ID, image),
 		containerd.WithRuntime(cfg.Runtime, nil),
 		containerd.WithNewSpec(specOpts...),
+	}
+	if len(cfg.Labels) > 0 {
+		containerOpts = append(containerOpts, containerd.WithContainerLabels(cfg.Labels))
 	}
 
 	_, err = c.client.NewContainer(ctx, cfg.ID, containerOpts...)

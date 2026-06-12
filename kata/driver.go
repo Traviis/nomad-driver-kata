@@ -316,6 +316,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		CapAdd:           taskCfg.CapAdd,
 		CapDrop:          taskCfg.CapDrop,
 		Ulimit:           taskCfg.Ulimit,
+		Labels:           taskCfg.Labels,
 	}); err != nil {
 		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("creating container: %w", err)

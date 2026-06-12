@@ -45,6 +45,7 @@ type TaskConfig struct {
 	CapDrop    []string          `codec:"cap_drop"`
 	Auth       TaskAuth          `codec:"auth"`
 	Ulimit     map[string]string `codec:"ulimit"`
+	Labels     map[string]string `codec:"labels"`
 }
 
 // TaskState is serialized into the task handle for recovery after driver restart.
@@ -94,4 +95,5 @@ var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"pids_limit": hclspec.NewAttr("pids_limit", "number", false),
 	"cap_add":   hclspec.NewAttr("cap_add", "list(string)", false),
 	"cap_drop":  hclspec.NewAttr("cap_drop", "list(string)", false),
+	"labels":   hclspec.NewAttr("labels", "map(string)", false),
 })
