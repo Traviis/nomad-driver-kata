@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -738,6 +739,40 @@ func TestParseDevice(t *testing.T) {
 			}
 			if perms != tt.wantPerms {
 				t.Errorf("perms = %q, want %q", perms, tt.wantPerms)
+			}
+		})
+	}
+}
+func TestParseSignal(t *testing.T) {
+	tests := []struct {
+		input string
+		want  syscall.Signal
+	}{
+		{"SIGTERM", syscall.SIGTERM},
+		{"SIGKILL", syscall.SIGKILL},
+		{"SIGHUP", syscall.SIGHUP},
+		{"SIGINT", syscall.SIGINT},
+		{"SIGQUIT", syscall.SIGQUIT},
+		{"SIGUSR1", syscall.SIGUSR1},
+		{"SIGUSR2", syscall.SIGUSR2},
+		{"SIGPIPE", syscall.SIGPIPE},
+		{"SIGCONT", syscall.SIGCONT},
+		// without SIG prefix
+		{"TERM", syscall.SIGTERM},
+		{"KILL", syscall.SIGKILL},
+		{"HUP", syscall.SIGHUP},
+		// lowercase
+		{"sigterm", syscall.SIGTERM},
+		{"kill", syscall.SIGKILL},
+		// unknown falls back to SIGTERM
+		{"BOGUS", syscall.SIGTERM},
+		{"", syscall.SIGTERM},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseSignal(tt.input)
+			if got != tt.want {
+				t.Errorf("parseSignal(%q) = %d, want %d", tt.input, got, tt.want)
 			}
 		})
 	}
