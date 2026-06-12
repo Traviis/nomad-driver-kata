@@ -36,22 +36,22 @@ type TaskAuth struct {
 
 // TaskConfig holds per-task settings from the job spec.
 type TaskConfig struct {
-	Image      string            `codec:"image"`
-	Command    string            `codec:"command"`
-	Args       []string          `codec:"args"`
-	Cwd        string            `codec:"cwd"`
-	Hostname   string            `codec:"hostname"`
-	ForcePull  bool              `codec:"force_pull"`
-	Privileged      bool              `codec:"privileged"`
-	ReadonlyRootfs  bool              `codec:"readonly_rootfs"`
-	PidsLimit       int64             `codec:"pids_limit"`
-	CapAdd     []string          `codec:"cap_add"`
-	CapDrop    []string          `codec:"cap_drop"`
-	ExtraHosts []string          `codec:"extra_hosts"`
-	Devices    []string          `codec:"devices"`
-	Auth       TaskAuth          `codec:"auth"`
-	Ulimit     map[string]string `codec:"ulimit"`
-	Labels     map[string]string `codec:"labels"`
+	Image          string            `codec:"image"`
+	Command        string            `codec:"command"`
+	Args           []string          `codec:"args"`
+	Cwd            string            `codec:"cwd"`
+	Hostname       string            `codec:"hostname"`
+	ForcePull      bool              `codec:"force_pull"`
+	Privileged     bool              `codec:"privileged"`
+	ReadonlyRootfs bool              `codec:"readonly_rootfs"`
+	PidsLimit      int64             `codec:"pids_limit"`
+	CapAdd         []string          `codec:"cap_add"`
+	CapDrop        []string          `codec:"cap_drop"`
+	ExtraHosts     []string          `codec:"extra_hosts"`
+	Devices        []string          `codec:"devices"`
+	Auth           TaskAuth          `codec:"auth"`
+	Ulimit         map[string]string `codec:"ulimit"`
+	Labels         map[string]string `codec:"labels"`
 }
 
 // TaskState is serialized into the task handle for recovery after driver restart.
@@ -95,23 +95,23 @@ var pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 })
 
 var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-	"image":      hclspec.NewAttr("image", "string", true),
-	"command":    hclspec.NewAttr("command", "string", false),
-	"args":       hclspec.NewAttr("args", "list(string)", false),
-	"cwd":        hclspec.NewAttr("cwd", "string", false),
-	"force_pull": hclspec.NewAttr("force_pull", "bool", false),
-	"privileged": hclspec.NewAttr("privileged", "bool", false),
+	"image":          hclspec.NewAttr("image", "string", true),
+	"command":        hclspec.NewAttr("command", "string", false),
+	"args":           hclspec.NewAttr("args", "list(string)", false),
+	"cwd":            hclspec.NewAttr("cwd", "string", false),
+	"hostname":       hclspec.NewAttr("hostname", "string", false),
+	"force_pull":     hclspec.NewAttr("force_pull", "bool", false),
+	"privileged":     hclspec.NewAttr("privileged", "bool", false),
+	"readonly_rootfs": hclspec.NewAttr("readonly_rootfs", "bool", false),
+	"pids_limit":     hclspec.NewAttr("pids_limit", "number", false),
+	"cap_add":        hclspec.NewAttr("cap_add", "list(string)", false),
+	"cap_drop":       hclspec.NewAttr("cap_drop", "list(string)", false),
+	"extra_hosts":    hclspec.NewAttr("extra_hosts", "list(string)", false),
+	"devices":        hclspec.NewAttr("devices", "list(string)", false),
 	"auth": hclspec.NewBlock("auth", false, hclspec.NewObject(map[string]*hclspec.Spec{
 		"username": hclspec.NewAttr("username", "string", false),
 		"password": hclspec.NewAttr("password", "string", false),
 	})),
-	"ulimit":    hclspec.NewAttr("ulimit", "map(string)", false),
-	"pids_limit": hclspec.NewAttr("pids_limit", "number", false),
-	"cap_add":   hclspec.NewAttr("cap_add", "list(string)", false),
-	"cap_drop":  hclspec.NewAttr("cap_drop", "list(string)", false),
-	"labels":   hclspec.NewAttr("labels", "map(string)", false),
-	"readonly_rootfs": hclspec.NewAttr("readonly_rootfs", "bool", false),
-	"hostname": hclspec.NewAttr("hostname", "string", false),
-	"extra_hosts": hclspec.NewAttr("extra_hosts", "list(string)", false),
-	"devices":   hclspec.NewAttr("devices", "list(string)", false),
+	"ulimit":         hclspec.NewAttr("ulimit", "map(string)", false),
+	"labels":         hclspec.NewAttr("labels", "map(string)", false),
 })
