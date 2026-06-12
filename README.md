@@ -111,16 +111,21 @@ exact pattern that breaks when using Kata through Nomad's Docker driver
 
 ## Task config reference
 
-| Field        | Type          | Required | Description                              |
-|--------------|---------------|----------|------------------------------------------|
-| `image`      | string        | yes      | OCI image reference                      |
-| `command`    | string        | no       | Override entrypoint                      |
-| `args`       | list(string)  | no       | Arguments to command                     |
-| `cwd`        | string        | no       | Working directory inside the container   |
-| `force_pull` | bool          | no       | Always pull the image, even if cached    |
-| `privileged` | bool          | no       | Run container in privileged mode         |
-| `auth`       | block         | no       | Registry credentials (`username`, `password`) |
-| `ulimit`     | map(string)   | no       | Resource limits (e.g. `nofile = "1024:65536"`) |
+| Field             | Type          | Required | Description                              |
+|-------------------|---------------|----------|------------------------------------------|
+| `image`           | string        | yes      | OCI image reference                      |
+| `command`         | string        | no       | Override entrypoint                      |
+| `args`            | list(string)  | no       | Arguments to command                     |
+| `cwd`             | string        | no       | Working directory inside the container   |
+| `force_pull`      | bool          | no       | Always pull the image, even if cached    |
+| `privileged`      | bool          | no       | Run container in privileged mode         |
+| `readonly_rootfs` | bool          | no       | Mount the root filesystem as read-only   |
+| `pids_limit`      | number        | no       | Maximum number of processes in the container |
+| `cap_add`         | list(string)  | no       | Linux capabilities to add                |
+| `cap_drop`        | list(string)  | no       | Linux capabilities to drop               |
+| `labels`          | map(string)   | no       | Container labels (metadata)              |
+| `auth`            | block         | no       | Registry credentials (`username`, `password`) |
+| `ulimit`          | map(string)   | no       | Resource limits (e.g. `nofile = "1024:65536"`) |
 
 ## Development
 
