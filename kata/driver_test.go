@@ -246,7 +246,7 @@ func TestWriteHosts(t *testing.T) {
 	d := testDriver()
 	path := filepath.Join(t.TempDir(), "hosts")
 
-	if err := d.writeHosts(path, nil); err != nil {
+	if err := d.writeHosts(path, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,7 +272,7 @@ func TestWriteHostsWithHostname(t *testing.T) {
 		Address:  "172.26.64.5",
 		Hostname: "my-task",
 	}
-	if err := d.writeHosts(path, hosts); err != nil {
+	if err := d.writeHosts(path, hosts, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,6 +281,29 @@ func TestWriteHostsWithHostname(t *testing.T) {
 
 	if !strings.Contains(content, "172.26.64.5 my-task") {
 		t.Errorf("hosts missing hostname entry in:\n%s", content)
+	}
+	if !strings.Contains(content, "127.0.0.1 localhost") {
+		t.Errorf("hosts missing localhost in:\n%s", content)
+	}
+}
+
+func TestWriteHostsExtraHosts(t *testing.T) {
+	d := testDriver()
+	path := filepath.Join(t.TempDir(), "hosts")
+
+	extra := []string{"mydb:10.0.0.5", "cache:10.0.0.6"}
+	if err := d.writeHosts(path, nil, extra); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+
+	if !strings.Contains(content, "10.0.0.5 mydb") {
+		t.Errorf("hosts missing extra host mydb in:\n%s", content)
+	}
+	if !strings.Contains(content, "10.0.0.6 cache") {
+		t.Errorf("hosts missing extra host cache in:\n%s", content)
 	}
 	if !strings.Contains(content, "127.0.0.1 localhost") {
 		t.Errorf("hosts missing localhost in:\n%s", content)

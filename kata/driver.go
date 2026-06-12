@@ -266,7 +266,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	}
 
 	hostsPath := filepath.Join(configDir, "hosts")
-	if err := d.writeHosts(hostsPath, hostsConfig(cfg)); err != nil {
+	if err := d.writeHosts(hostsPath, hostsConfig(cfg), taskCfg.ExtraHosts); err != nil {
 		d.sandboxMgr.Release(ctx, cfg.AllocID)
 		return nil, nil, fmt.Errorf("writing hosts: %w", err)
 	}
@@ -616,13 +616,19 @@ func isLoopback(addr string) bool {
 	return strings.HasPrefix(addr, "127.") || addr == "::1"
 }
 
-func (d *Driver) writeHosts(path string, hosts *drivers.HostsConfig) error {
+func (d *Driver) writeHosts(path string, hosts *drivers.HostsConfig, extraHosts []string) error {
 	lines := []string{
 		"127.0.0.1 localhost",
 		"::1 localhost ip6-localhost ip6-loopback",
 	}
 	if hosts != nil && hosts.Address != "" && hosts.Hostname != "" {
 		lines = append(lines, hosts.Address+" "+hosts.Hostname)
+	}
+	for _, entry := range extraHosts {
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) == 2 {
+			lines = append(lines, parts[1]+" "+parts[0])
+		}
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 }
