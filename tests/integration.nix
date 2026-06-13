@@ -39,6 +39,7 @@ let
     client {
       enabled  = true
       cni_path = "${pkgs.cni-plugins}/bin"
+      cni_config_dir = "/tmp/kata-driver-test/cni"
     }
 
     plugin_dir = "/tmp/kata-driver-test/plugins"
@@ -99,6 +100,88 @@ let
     }
   '';
 
+  multiVmJob = pkgs.writeText "multi-vm-job.nomad.hcl" ''
+    job "kata-multi-vm" {
+      type        = "batch"
+      datacenters = ["dc1"]
+
+      group "server" {
+        network {
+          mode = "bridge"
+          port "http" {
+            to = 8080
+          }
+        }
+
+        task "web" {
+          driver = "kata"
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args    = ["-c", "echo WEB_OK && mkdir -p /www && echo SERVER_OK > /www/index.html && httpd -f -p 8080 -h /www"]
+          }
+          resources {
+            cpu    = 100
+            memory = 128
+          }
+        }
+
+        task "web-sidecar" {
+          driver = "kata"
+          lifecycle {
+            hook    = "prestart"
+            sidecar = true
+          }
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args    = ["-c", "echo WEB_SIDECAR_OK; sleep 3600"]
+          }
+          resources {
+            cpu    = 50
+            memory = 64
+          }
+        }
+      }
+
+      group "client" {
+        network {
+          mode = "bridge"
+        }
+
+        task "fetcher" {
+          driver = "kata"
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args    = ["-c", "echo FETCHER_OK; sleep 3600"]
+          }
+          resources {
+            cpu    = 100
+            memory = 128
+          }
+        }
+
+        task "fetcher-sidecar" {
+          driver = "kata"
+          lifecycle {
+            hook    = "prestart"
+            sidecar = true
+          }
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args    = ["-c", "echo FETCHER_SIDECAR_OK; sleep 3600"]
+          }
+          resources {
+            cpu    = 50
+            memory = 64
+          }
+        }
+      }
+    }
+  '';
+
 in pkgs.writeShellScriptBin "kata-driver-test" ''
   set -euo pipefail
 
@@ -147,6 +230,7 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
 
     if [ -f "$TESTDIR/nomad.pid" ]; then
       ${pkgs.nomad}/bin/nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
+      ${pkgs.nomad}/bin/nomad job stop -purge -detach kata-multi-vm >/dev/null 2>&1 || true
       sleep 3
     fi
 
@@ -177,10 +261,16 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   echo "=== Kata Driver Integration Test ==="
   echo ""
 
+  # Kill stale test Nomad from a previous interrupted run (not the system Nomad)
+  if [ -f "$TESTDIR/nomad.pid" ]; then
+    kill "$(cat "$TESTDIR/nomad.pid")" 2>/dev/null || true
+    sleep 1
+  fi
+
   # Prep dirs
   echo "Preparing test directory..."
   remove_testdir
-  mkdir -p "$TESTDIR"/{containerd,run,nomad,plugins}
+  mkdir -p "$TESTDIR"/{containerd,run,nomad,plugins,cni}
   echo "[OK] test directory ready: $TESTDIR"
 
   # Symlink plugin binary
@@ -213,15 +303,29 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   }
   echo "[OK] containerd running"
 
-  # Pre-pull images so Nomad doesn't timeout
-  echo "Pulling images..."
-  ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull registry.k8s.io/pause:3.9 >/dev/null
-  ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull docker.io/library/busybox:latest >/dev/null
-  echo "[OK] images cached"
+  CACHE_DIR="/var/cache/kata-test"
+  echo "Loading images..."
+  if [ -f "$CACHE_DIR/pause.tar" ]; then
+    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image import "$CACHE_DIR/pause.tar" >/dev/null
+  else
+    echo "  pulling registry.k8s.io/pause:3.9 (no local cache)..."
+    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull registry.k8s.io/pause:3.9 >/dev/null
+    mkdir -p "$CACHE_DIR"
+    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image export "$CACHE_DIR/pause.tar" registry.k8s.io/pause:3.9
+  fi
+  if [ -f "$CACHE_DIR/busybox.tar" ]; then
+    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image import "$CACHE_DIR/busybox.tar" >/dev/null
+  else
+    echo "  pulling docker.io/library/busybox:latest (no local cache)..."
+    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull docker.io/library/busybox:latest >/dev/null
+    mkdir -p "$CACHE_DIR"
+    ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image export "$CACHE_DIR/busybox.tar" docker.io/library/busybox:latest
+  fi
+  echo "[OK] images ready"
 
   # Start Nomad in dev mode
   echo "Starting Nomad..."
-  PATH="${pkgs.cni-plugins}/bin:$PATH" \
+  PATH="${pkgs.iptables}/bin:${pkgs.cni-plugins}/bin:$PATH" \
     ${pkgs.nomad}/bin/nomad agent \
       -config=${nomadConfig} \
       -bind=127.0.0.1 \
@@ -257,6 +361,11 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
     exit 1
   fi
 
+  echo ""
+  echo "=== Verifying images in containerd ==="
+  ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image ls -q
+  echo "[OK] images listed"
+
   # Submit test job
   echo ""
   echo "=== Submitting test job ==="
@@ -278,6 +387,8 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   if [ "$ALLOC_STATUS" != "running" ] && [ "$ALLOC_STATUS" != "complete" ]; then
     echo "[FAIL] allocation did not reach running state"
     ${pkgs.nomad}/bin/nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+    echo "--- nomad log tail ---"
+    tail -100 "$TESTDIR/nomad.log" || true
     exit 1
   fi
 
@@ -373,7 +484,111 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
     exit 1
   fi
 
+  # Stop Phase 1 job to free resources for Phase 2
   echo ""
-  echo "=== Integration test passed ==="
-  echo "Allocation tested: $ALLOC_ID"
+  echo "========================================="
+  echo "=== Phase 2: Multi-VM Networking ==="
+  echo "========================================="
+  ${pkgs.nomad}/bin/nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
+  sleep 5
+
+  echo ""
+  echo "=== Submitting multi-VM job ==="
+  ${pkgs.nomad}/bin/nomad job run -detach ${multiVmJob}
+
+  echo "Waiting for allocations..."
+  SERVER_STATUS="pending"
+  CLIENT_STATUS="pending"
+  for i in $(seq 1 90); do
+    if [ "$SERVER_STATUS" != "running" ]; then
+      SERVER_STATUS=$(${pkgs.nomad}/bin/nomad job status -json kata-multi-vm 2>/dev/null | ${pkgs.jq}/bin/jq -r '[.[0].Allocations[] | select(.TaskGroup == "server")][0].ClientStatus // "pending"') || true
+    fi
+    if [ "$CLIENT_STATUS" != "running" ]; then
+      CLIENT_STATUS=$(${pkgs.nomad}/bin/nomad job status -json kata-multi-vm 2>/dev/null | ${pkgs.jq}/bin/jq -r '[.[0].Allocations[] | select(.TaskGroup == "client")][0].ClientStatus // "pending"') || true
+    fi
+    if [ "$SERVER_STATUS" = "running" ] && [ "$CLIENT_STATUS" = "running" ]; then break; fi
+    sleep 2
+  done
+
+  SERVER_ALLOC=$(${pkgs.nomad}/bin/nomad job status -json kata-multi-vm | ${pkgs.jq}/bin/jq -r '[.[0].Allocations[] | select(.TaskGroup == "server")][0].ID')
+  CLIENT_ALLOC=$(${pkgs.nomad}/bin/nomad job status -json kata-multi-vm | ${pkgs.jq}/bin/jq -r '[.[0].Allocations[] | select(.TaskGroup == "client")][0].ID')
+  echo "Server: $SERVER_ALLOC ($SERVER_STATUS)"
+  echo "Client: $CLIENT_ALLOC ($CLIENT_STATUS)"
+  if [ "$SERVER_STATUS" != "running" ]; then
+    echo "[FAIL] server allocation not running (status: $SERVER_STATUS)"
+    ${pkgs.nomad}/bin/nomad alloc status "$SERVER_ALLOC" 2>/dev/null || true
+    echo "--- nomad log tail ---"
+    tail -50 "$TESTDIR/nomad.log" 2>/dev/null || true
+    exit 1
+  fi
+  if [ "$CLIENT_STATUS" != "running" ]; then
+    echo "[FAIL] client allocation not running (status: $CLIENT_STATUS)"
+    ${pkgs.nomad}/bin/nomad alloc status "$CLIENT_ALLOC" 2>/dev/null || true
+    echo "--- nomad log tail ---"
+    tail -50 "$TESTDIR/nomad.log" 2>/dev/null || true
+    exit 1
+  fi
+
+  # VM isolation: different groups = different VMs
+  echo ""
+  echo "=== VM isolation ==="
+  SERVER_HOSTNAME=$(${pkgs.nomad}/bin/nomad alloc exec -task web "$SERVER_ALLOC" hostname 2>/dev/null || echo "")
+  CLIENT_HOSTNAME=$(${pkgs.nomad}/bin/nomad alloc exec -task fetcher "$CLIENT_ALLOC" hostname 2>/dev/null || echo "")
+  echo "server VM: $SERVER_HOSTNAME"
+  echo "client VM: $CLIENT_HOSTNAME"
+  if [ -n "$SERVER_HOSTNAME" ] && [ -n "$CLIENT_HOSTNAME" ] && [ "$SERVER_HOSTNAME" != "$CLIENT_HOSTNAME" ]; then
+    echo "[OK] different groups run in separate VMs"
+  else
+    echo "[FAIL] expected different hostnames for different VMs"
+    exit 1
+  fi
+
+  # VM sharing: tasks within group share VM
+  echo ""
+  echo "=== Intra-group VM sharing ==="
+  WEB_SIDECAR_HOSTNAME=$(${pkgs.nomad}/bin/nomad alloc exec -task web-sidecar "$SERVER_ALLOC" hostname 2>/dev/null || echo "")
+  FETCHER_SIDECAR_HOSTNAME=$(${pkgs.nomad}/bin/nomad alloc exec -task fetcher-sidecar "$CLIENT_ALLOC" hostname 2>/dev/null || echo "")
+  echo "web + web-sidecar:         $SERVER_HOSTNAME / $WEB_SIDECAR_HOSTNAME"
+  echo "fetcher + fetcher-sidecar: $CLIENT_HOSTNAME / $FETCHER_SIDECAR_HOSTNAME"
+  if [ "$SERVER_HOSTNAME" = "$WEB_SIDECAR_HOSTNAME" ] && [ "$CLIENT_HOSTNAME" = "$FETCHER_SIDECAR_HOSTNAME" ]; then
+    echo "[OK] tasks within each group share a VM"
+  else
+    echo "[FAIL] tasks within a group have different hostnames"
+    exit 1
+  fi
+
+  # Cross-VM networking
+  echo ""
+  echo "=== Cross-VM networking ==="
+  SERVER_IP=$(${pkgs.nomad}/bin/nomad alloc exec -task web "$SERVER_ALLOC" ip addr 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*scope global.*/\1/p') || true
+  echo "Server bridge IP: $SERVER_IP"
+
+  if [ -z "$SERVER_IP" ] || [ "$SERVER_IP" = "null" ]; then
+    echo "[FAIL] could not determine server bridge IP"
+    ${pkgs.nomad}/bin/nomad alloc status -json "$SERVER_ALLOC" | ${pkgs.jq}/bin/jq '.AllocatedResources.Shared' 2>/dev/null || true
+    exit 1
+  fi
+
+  RESPONSE=""
+  for i in $(seq 1 15); do
+    RESPONSE=$(${pkgs.nomad}/bin/nomad alloc exec -task fetcher "$CLIENT_ALLOC" wget -q -O - "http://$SERVER_IP:8080/" 2>/dev/null || echo "")
+    if echo "$RESPONSE" | grep -q "SERVER_OK"; then break; fi
+    sleep 2
+  done
+  echo "Response: $RESPONSE"
+  if echo "$RESPONSE" | grep -q "SERVER_OK"; then
+    echo "[OK] cross-VM HTTP request succeeded via bridge"
+  else
+    echo "[FAIL] could not reach server from client VM"
+    echo "--- diagnostics ---"
+    echo "Server network:"
+    ${pkgs.nomad}/bin/nomad alloc exec -task web "$SERVER_ALLOC" ip addr 2>/dev/null || true
+    echo "Client network:"
+    ${pkgs.nomad}/bin/nomad alloc exec -task fetcher "$CLIENT_ALLOC" ip addr 2>/dev/null || true
+    ${pkgs.nomad}/bin/nomad alloc exec -task fetcher "$CLIENT_ALLOC" ip route 2>/dev/null || true
+    exit 1
+  fi
+
+  echo ""
+  echo "=== All integration tests passed ==="
 ''

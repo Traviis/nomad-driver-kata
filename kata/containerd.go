@@ -131,8 +131,10 @@ func (c *containerdClient) EnsureImage(ctx context.Context, ref string, forcePul
 	if !forcePull {
 		_, err := c.client.GetImage(ctx, ref)
 		if err == nil {
+			c.logger.Debug("image already present", "ref", ref)
 			return nil
 		}
+		c.logger.Warn("image not found locally, will pull", "ref", ref, "namespace", c.namespace, "error", err)
 	}
 
 	c.logger.Info("pulling image", "ref", ref)
