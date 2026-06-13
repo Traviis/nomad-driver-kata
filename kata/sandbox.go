@@ -61,18 +61,22 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 		Runtime:  runtime,
 		NetNS:    netNS,
 		Hostname: hostname,
+		Annotations: map[string]string{
+			"io.kubernetes.cri-o.ContainerType": "sandbox",
+		},
 	}); err != nil {
 		return nil, fmt.Errorf("creating sandbox container: %w", err)
 	}
 
-	if err := sm.ctr.StartTaskDetached(ctx, id); err != nil {
+	if err := sm.ctr.CreateSandboxMetadata(ctx, id, runtime); err != nil {
 		sm.ctr.DeleteContainer(ctx, id)
-		return nil, fmt.Errorf("starting sandbox: %w", err)
+		return nil, fmt.Errorf("creating sandbox metadata: %w", err)
 	}
 
-	if err := sm.ctr.CreateSandboxMetadata(ctx, id, runtime); err != nil {
-		sm.ctr.Cleanup(ctx, id)
-		return nil, fmt.Errorf("creating sandbox metadata: %w", err)
+	if err := sm.ctr.StartTaskDetached(ctx, id); err != nil {
+		sm.ctr.DeleteSandboxMetadata(ctx, id)
+		sm.ctr.DeleteContainer(ctx, id)
+		return nil, fmt.Errorf("starting sandbox: %w", err)
 	}
 
 	sb := &Sandbox{ID: id, AllocID: allocID}

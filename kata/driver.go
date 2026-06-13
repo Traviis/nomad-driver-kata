@@ -289,7 +289,10 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		command = append(command, taskCfg.Args...)
 	}
 
-	annotations := map[string]string{}
+	annotations := map[string]string{
+		"io.kubernetes.cri-o.ContainerType": "container",
+		"io.kubernetes.cri-o.SandboxID":     sandbox.ID,
+	}
 
 	configDir := d.taskConfigDir(cfg.AllocID, cfg.Name)
 	if err := os.MkdirAll(configDir, 0755); err != nil {

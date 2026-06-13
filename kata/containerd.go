@@ -166,7 +166,7 @@ func (c *containerdClient) CreateSandboxMetadata(ctx context.Context, id, runtim
 	_, err := c.client.SandboxStore().Create(ctx, sandboxstore.Sandbox{
 		ID:        id,
 		Runtime:   sandboxstore.RuntimeOpts{Name: runtime},
-		Sandboxer: "",
+		Sandboxer: "shim",
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
