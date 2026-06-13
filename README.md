@@ -8,17 +8,19 @@ with Kata — but on Nomad.
 
 ## How it works
 
-When the first task in an allocation starts, the driver creates and starts a
-containerd sandbox using the Kata runtime. Subsequent tasks in the same
-allocation are created with containerd's sandbox relationship set to that
-sandbox ID, which makes the Kata shim place them in the same microVM. When all
-tasks exit, the sandbox is torn down.
+When the first task in an allocation starts, the driver creates a pause
+container with the Kata runtime and records it as the allocation sandbox in
+containerd metadata. Subsequent tasks in the same allocation are created with
+containerd's sandbox relationship set to that sandbox ID, which lets containerd
+reuse the existing Kata shim and place them in the same microVM. When all tasks
+exit, the sandbox container and metadata are torn down.
 
 ```
 Nomad Allocation
 ├── Kata VM (sandbox)  ← one VM per allocation
-│   ├── app container  ← task "app"
-│   └── sidecar        ← task "sidecar"
+│   ├── pause container (keeps VM alive)
+│   ├── app container   ← task "app"
+│   └── sidecar         ← task "sidecar"
 └── shared network namespace inside the VM
 ```
 
@@ -67,6 +69,9 @@ plugin "nomad-driver-kata" {
 
     # containerd namespace
     namespace = "default"
+
+    # Image used for the sandbox container (default: "registry.k8s.io/pause:3.9")
+    pause_image = "registry.k8s.io/pause:3.9"
 
     # Kata shimv2 runtime identifier
     runtime = "io.containerd.kata.v2"

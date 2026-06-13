@@ -38,7 +38,7 @@ func sandboxID(allocID string) string {
 
 // GetOrCreate returns an existing sandbox for the allocation or boots a new
 // Kata VM. The caller must eventually call Release for each GetOrCreate.
-func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, runtime, netNS, hostname string) (*Sandbox, error) {
+func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, runtime, netNS, hostname string) (*Sandbox, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -51,18 +51,28 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, runtime, net
 	id := sandboxID(allocID)
 	sm.logger.Info("creating sandbox VM", "alloc_id", allocID, "sandbox_id", id)
 
-	if err := sm.ctr.CreateSandbox(ctx, &SandboxConfig{
+	if err := sm.ctr.EnsureImage(ctx, pauseImage, false, "", ""); err != nil {
+		return nil, fmt.Errorf("ensuring pause image: %w", err)
+	}
+
+	if err := sm.ctr.CreateContainer(ctx, &ContainerConfig{
 		ID:       id,
+		Image:    pauseImage,
 		Runtime:  runtime,
 		NetNS:    netNS,
 		Hostname: hostname,
 	}); err != nil {
-		return nil, fmt.Errorf("creating sandbox: %w", err)
+		return nil, fmt.Errorf("creating sandbox container: %w", err)
 	}
 
-	if err := sm.ctr.StartSandbox(ctx, id); err != nil {
-		sm.ctr.DeleteSandbox(ctx, id)
+	if err := sm.ctr.StartTaskDetached(ctx, id); err != nil {
+		sm.ctr.DeleteContainer(ctx, id)
 		return nil, fmt.Errorf("starting sandbox: %w", err)
+	}
+
+	if err := sm.ctr.CreateSandboxMetadata(ctx, id, runtime); err != nil {
+		sm.ctr.Cleanup(ctx, id)
+		return nil, fmt.Errorf("creating sandbox metadata: %w", err)
 	}
 
 	sb := &Sandbox{ID: id, AllocID: allocID}
@@ -91,7 +101,8 @@ func (sm *SandboxManager) Release(ctx context.Context, allocID string) {
 	}
 
 	sm.logger.Info("destroying sandbox VM", "alloc_id", allocID, "sandbox_id", sb.ID)
-	sm.ctr.DeleteSandbox(ctx, sb.ID)
+	sm.ctr.Cleanup(ctx, sb.ID)
+	sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
 	delete(sm.sandboxes, allocID)
 }
 

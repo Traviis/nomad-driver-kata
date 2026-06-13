@@ -656,9 +656,9 @@ func TestStartTaskPassesOptions(t *testing.T) {
 		t.Fatalf("StartTask: %v", err)
 	}
 
-	sandbox := rec.lastSandboxConfig()
+	sandbox := rec.configForID(sandboxID(cfg.AllocID))
 	if sandbox == nil {
-		t.Fatal("no SandboxConfig recorded")
+		t.Fatal("no sandbox ContainerConfig recorded")
 	}
 	if sandbox.Hostname != cfg.TaskGroupName {
 		t.Errorf("sandbox Hostname = %q, want %q", sandbox.Hostname, cfg.TaskGroupName)

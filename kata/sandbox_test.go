@@ -19,7 +19,7 @@ func TestSandboxGetOrCreate(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
 	ctx := context.Background()
 
-	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 	if err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
@@ -29,11 +29,17 @@ func TestSandboxGetOrCreate(t *testing.T) {
 	if sb.refCount.Load() != 1 {
 		t.Fatalf("refCount = %d, want 1", sb.refCount.Load())
 	}
-	if !rec.called("CreateSandbox") {
-		t.Error("expected CreateSandbox call")
+	if !rec.called("EnsureImage") {
+		t.Error("expected EnsureImage call")
 	}
-	if !rec.called("StartSandbox") {
-		t.Error("expected StartSandbox call")
+	if !rec.called("CreateContainer") {
+		t.Error("expected CreateContainer call")
+	}
+	if !rec.called("StartTaskDetached") {
+		t.Error("expected StartTaskDetached call")
+	}
+	if !rec.called("CreateSandboxMetadata") {
+		t.Error("expected CreateSandboxMetadata call")
 	}
 }
 
@@ -42,14 +48,14 @@ func TestSandboxHostname(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
 	ctx := context.Background()
 
-	_, err := mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "my-group")
+	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "my-group")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := rec.lastSandboxConfig()
+	cfg := rec.lastConfig()
 	if cfg == nil {
-		t.Fatal("no sandbox config recorded")
+		t.Fatal("no container config recorded")
 	}
 	if cfg.Hostname != "my-group" {
 		t.Errorf("Hostname = %q, want %q", cfg.Hostname, "my-group")
@@ -61,39 +67,39 @@ func TestSandboxNetNS(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
 	ctx := context.Background()
 
-	_, err := mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "/var/run/netns/test", "")
+	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "/var/run/netns/test", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := rec.lastSandboxConfig()
+	cfg := rec.lastConfig()
 	if cfg == nil {
-		t.Fatal("no sandbox config recorded")
+		t.Fatal("no container config recorded")
 	}
 	if cfg.NetNS != "/var/run/netns/test" {
 		t.Errorf("NetNS = %q, want %q", cfg.NetNS, "/var/run/netns/test")
 	}
 }
 
-func TestSandboxUsesContainerdSandboxAPI(t *testing.T) {
+func TestSandboxCreatesContainerdSandboxMetadata(t *testing.T) {
 	rec := newRecorder()
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
 	ctx := context.Background()
 
-	_, err := mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "")
+	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if rec.called("CreateContainer") {
-		t.Fatal("sandbox must use containerd sandbox API, not a pause container")
+	if !rec.called("CreateSandboxMetadata") {
+		t.Fatal("expected sandbox metadata to be registered")
 	}
-	cfg := rec.lastSandboxConfig()
+	cfg := rec.configForID("kata-alloc-1-sandbox")
 	if cfg == nil {
-		t.Fatal("no sandbox config recorded")
+		t.Fatal("no sandbox container config recorded")
 	}
-	if cfg.ID != "kata-alloc-1-sandbox" {
-		t.Errorf("sandbox ID = %q, want %q", cfg.ID, "kata-alloc-1-sandbox")
+	if cfg.Image != "pause:3.9" {
+		t.Errorf("sandbox image = %q, want %q", cfg.Image, "pause:3.9")
 	}
 	if cfg.Runtime != "io.containerd.kata.v2" {
 		t.Errorf("runtime = %q, want %q", cfg.Runtime, "io.containerd.kata.v2")
@@ -105,8 +111,8 @@ func TestSandboxReuse(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
 	ctx := context.Background()
 
-	sb1, _ := mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "")
-	sb2, _ := mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "")
+	sb1, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb2, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 
 	if sb1.ID != sb2.ID {
 		t.Fatalf("expected same sandbox, got %q and %q", sb1.ID, sb2.ID)
@@ -114,8 +120,11 @@ func TestSandboxReuse(t *testing.T) {
 	if sb1.refCount.Load() != 2 {
 		t.Fatalf("refCount = %d, want 2", sb1.refCount.Load())
 	}
-	if rec.callCount("CreateSandbox") != 1 {
-		t.Errorf("CreateSandbox called %d times, want 1", rec.callCount("CreateSandbox"))
+	if rec.callCount("CreateContainer") != 1 {
+		t.Errorf("CreateContainer called %d times, want 1", rec.callCount("CreateContainer"))
+	}
+	if rec.callCount("CreateSandboxMetadata") != 1 {
+		t.Errorf("CreateSandboxMetadata called %d times, want 1", rec.callCount("CreateSandboxMetadata"))
 	}
 }
 
@@ -124,17 +133,20 @@ func TestSandboxRelease(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
 	ctx := context.Background()
 
-	mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "")
-	mgr.GetOrCreate(ctx, "alloc-1", "io.containerd.kata.v2", "", "")
+	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 
 	mgr.Release(ctx, "alloc-1")
-	if rec.called("DeleteSandbox") {
-		t.Error("DeleteSandbox should not be called while refs remain")
+	if rec.called("Cleanup") || rec.called("DeleteSandboxMetadata") {
+		t.Error("sandbox should not be cleaned up while refs remain")
 	}
 
 	mgr.Release(ctx, "alloc-1")
-	if !rec.called("DeleteSandbox") {
-		t.Error("expected DeleteSandbox call when last ref released")
+	if !rec.called("Cleanup") {
+		t.Error("expected Cleanup call when last ref released")
+	}
+	if !rec.called("DeleteSandboxMetadata") {
+		t.Error("expected DeleteSandboxMetadata call when last ref released")
 	}
 }
 

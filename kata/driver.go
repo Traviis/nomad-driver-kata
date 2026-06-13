@@ -117,6 +117,9 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	if config.Namespace == "" {
 		config.Namespace = defaultNamespace
 	}
+	if config.PauseImage == "" {
+		config.PauseImage = defaultPauseImage
+	}
 	if config.Runtime == "" {
 		config.Runtime = defaultRuntime
 	}
@@ -263,7 +266,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		d.logger.Info("using network namespace", "path", netNS)
 	}
 
-	sandbox, err := d.sandboxMgr.GetOrCreate(ctx, cfg.AllocID, d.config.Runtime, netNS, cfg.TaskGroupName)
+	sandbox, err := d.sandboxMgr.GetOrCreate(ctx, cfg.AllocID, d.config.PauseImage, d.config.Runtime, netNS, cfg.TaskGroupName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox setup: %w", err)
 	}

@@ -18,6 +18,7 @@ import (
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/containers"
 	"github.com/containerd/containerd/v2/core/remotes/docker"
+	sandboxstore "github.com/containerd/containerd/v2/core/sandbox"
 	"github.com/containerd/containerd/v2/pkg/cio"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
@@ -33,9 +34,8 @@ type Containerd interface {
 	Version(ctx context.Context) (string, error)
 
 	EnsureImage(ctx context.Context, ref string, forcePull bool, username, password string) error
-	CreateSandbox(ctx context.Context, cfg *SandboxConfig) error
-	StartSandbox(ctx context.Context, id string) error
-	DeleteSandbox(ctx context.Context, id string) error
+	CreateSandboxMetadata(ctx context.Context, id, runtime string) error
+	DeleteSandboxMetadata(ctx context.Context, id string) error
 	CreateContainer(ctx context.Context, cfg *ContainerConfig) error
 	DeleteContainer(ctx context.Context, id string) error
 
@@ -61,14 +61,6 @@ type Mount struct {
 	Destination string
 	Type        string
 	Options     []string
-}
-
-// SandboxConfig holds parameters for creating a containerd sandbox.
-type SandboxConfig struct {
-	ID       string
-	Runtime  string
-	NetNS    string
-	Hostname string
 }
 
 // ContainerConfig holds parameters for creating a containerd container.
@@ -168,48 +160,29 @@ func (c *containerdClient) EnsureImage(ctx context.Context, ref string, forcePul
 	return err
 }
 
-func (c *containerdClient) CreateSandbox(ctx context.Context, cfg *SandboxConfig) error {
+func (c *containerdClient) CreateSandboxMetadata(ctx context.Context, id, runtime string) error {
 	ctx = c.nsCtx(ctx)
-
-	specOpts := []oci.SpecOpts{
-		oci.WithDefaultSpec(),
+	now := time.Now().UTC()
+	_, err := c.client.SandboxStore().Create(ctx, sandboxstore.Sandbox{
+		ID:        id,
+		Runtime:   sandboxstore.RuntimeOpts{Name: runtime},
+		Sandboxer: "",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if errdefs.IsAlreadyExists(err) {
+		return nil
 	}
-	if cfg.Hostname != "" {
-		specOpts = append(specOpts, oci.WithHostname(cfg.Hostname))
-	}
-	if cfg.NetNS != "" {
-		specOpts = append(specOpts, oci.WithLinuxNamespace(specs.LinuxNamespace{
-			Type: specs.NetworkNamespace,
-			Path: cfg.NetNS,
-		}))
-	}
-
-	_, err := c.client.NewSandbox(ctx, cfg.ID,
-		containerd.WithSandboxRuntime(cfg.Runtime, nil),
-		containerd.WithSandboxSpec(&oci.Spec{}, specOpts...),
-	)
 	return err
 }
 
-func (c *containerdClient) StartSandbox(ctx context.Context, id string) error {
+func (c *containerdClient) DeleteSandboxMetadata(ctx context.Context, id string) error {
 	ctx = c.nsCtx(ctx)
-	sandbox, err := c.client.LoadSandbox(ctx, id)
-	if err != nil {
-		return err
+	err := c.client.SandboxStore().Delete(ctx, id)
+	if errdefs.IsNotFound(err) {
+		return nil
 	}
-	return sandbox.Start(ctx)
-}
-
-func (c *containerdClient) DeleteSandbox(ctx context.Context, id string) error {
-	ctx = c.nsCtx(ctx)
-	sandbox, err := c.client.LoadSandbox(ctx, id)
-	if err != nil {
-		if errdefs.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	return sandbox.Shutdown(ctx)
+	return err
 }
 
 func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerConfig) error {

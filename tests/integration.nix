@@ -19,6 +19,12 @@ let
     data_dir  = "/tmp/kata-driver-test/nomad"
     bind_addr = "127.0.0.1"
 
+    ports {
+      http = 14646
+      rpc  = 14647
+      serf = 14648
+    }
+
     advertise {
       http = "127.0.0.1"
       rpc  = "127.0.0.1"
@@ -41,6 +47,7 @@ let
       config {
         containerd_addr = "/tmp/kata-driver-test/containerd.sock"
         namespace       = "default"
+        pause_image     = "registry.k8s.io/pause:3.9"
         runtime         = "io.containerd.kata.v2"
       }
     }
@@ -102,7 +109,11 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
 
   TESTDIR="/tmp/kata-driver-test"
   CONTAINERD_SOCK="$TESTDIR/containerd.sock"
-  NOMAD_ADDR="http://127.0.0.1:4646"
+  NOMAD_ADDR="http://127.0.0.1:14646"
+  NOMAD_TOKEN=""
+  NOMAD_NAMESPACE=""
+  unset NOMAD_TOKEN NOMAD_NAMESPACE
+
   export NOMAD_ADDR
 
   remove_testdir() {
@@ -202,8 +213,9 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   }
   echo "[OK] containerd running"
 
-  # Pre-pull task image so Nomad doesn't timeout
+  # Pre-pull images so Nomad doesn't timeout
   echo "Pulling images..."
+  ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull registry.k8s.io/pause:3.9 >/dev/null
   ${pkgs.containerd}/bin/ctr -a "$CONTAINERD_SOCK" image pull docker.io/library/busybox:latest >/dev/null
   echo "[OK] images cached"
 
@@ -213,17 +225,18 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
     ${pkgs.nomad}/bin/nomad agent \
       -config=${nomadConfig} \
       -bind=127.0.0.1 \
+      -acl-enabled=false \
       &>"$TESTDIR/nomad.log" &
   echo $! > "$TESTDIR/nomad.pid"
 
   # Wait for Nomad
   for i in $(seq 1 30); do
-    if ${pkgs.nomad}/bin/nomad node status &>/dev/null; then
+    if ${pkgs.nomad}/bin/nomad node status -address="$NOMAD_ADDR" &>/dev/null; then
       break
     fi
     sleep 1
   done
-  ${pkgs.nomad}/bin/nomad node status >/dev/null || {
+  ${pkgs.nomad}/bin/nomad node status -address="$NOMAD_ADDR" >/dev/null || {
     echo "ERROR: Nomad failed to start"
     tail -50 "$TESTDIR/nomad.log"
     exit 1
@@ -234,7 +247,7 @@ in pkgs.writeShellScriptBin "kata-driver-test" ''
   echo ""
   echo "=== Checking driver fingerprint ==="
   sleep 5
-  DRIVER_STATUS=$(${pkgs.nomad}/bin/nomad node status -self -json 2>/dev/null | ${pkgs.jq}/bin/jq -r '.Drivers.kata.Detected // false')
+  DRIVER_STATUS=$(${pkgs.nomad}/bin/nomad node status -address="$NOMAD_ADDR" -self -json 2>/dev/null | ${pkgs.jq}/bin/jq -r '.Drivers.kata.Detected // false')
   if [ "$DRIVER_STATUS" = "true" ]; then
     echo "[OK] kata driver detected"
   else
