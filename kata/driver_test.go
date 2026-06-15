@@ -1121,3 +1121,84 @@ func TestTaskStatsMetricsError(t *testing.T) {
 		t.Error("expected Metrics calls despite errors")
 	}
 }
+
+func TestDestroyTaskNotForceRunning(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	rec.runCh = make(chan struct{})
+	defer close(rec.runCh)
+
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	err := d.DestroyTask(cfg.ID, false)
+	if err == nil {
+		t.Fatal("expected error destroying running task without force")
+	}
+	if !strings.Contains(err.Error(), "still running") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDestroyTaskSandboxTeardown(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+
+	cfg1 := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	cfg1.ID = "task-1"
+	cfg1.Name = "web"
+
+	cfg2 := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	cfg2.ID = "task-2"
+	cfg2.Name = "sidecar"
+
+	if _, _, err := d.StartTask(cfg1); err != nil {
+		t.Fatalf("StartTask(1): %v", err)
+	}
+	if _, _, err := d.StartTask(cfg2); err != nil {
+		t.Fatalf("StartTask(2): %v", err)
+	}
+
+	sbID := "kata-alloc-1-sandbox"
+
+	if err := d.DestroyTask(cfg1.ID, true); err != nil {
+		t.Fatalf("DestroyTask(1): %v", err)
+	}
+
+	// Sandbox should still exist — second task holds a ref
+	rec.mu.Lock()
+	var cleanupCount int
+	for _, c := range rec.calls {
+		if c.Method == "Cleanup" && len(c.Args) > 0 && c.Args[0] == sbID {
+			cleanupCount++
+		}
+	}
+	rec.mu.Unlock()
+	if cleanupCount != 0 {
+		t.Errorf("sandbox Cleanup called %d times after first destroy, want 0", cleanupCount)
+	}
+
+	if err := d.DestroyTask(cfg2.ID, true); err != nil {
+		t.Fatalf("DestroyTask(2): %v", err)
+	}
+
+	// Now sandbox should be torn down
+	rec.mu.Lock()
+	var sandboxCleanup, sandboxDeleteMeta bool
+	for _, c := range rec.calls {
+		if c.Method == "Cleanup" && len(c.Args) > 0 && c.Args[0] == sbID {
+			sandboxCleanup = true
+		}
+		if c.Method == "DeleteSandboxMetadata" && len(c.Args) > 0 && c.Args[0] == sbID {
+			sandboxDeleteMeta = true
+		}
+	}
+	rec.mu.Unlock()
+
+	if !sandboxCleanup {
+		t.Error("expected sandbox Cleanup after last task destroyed")
+	}
+	if !sandboxDeleteMeta {
+		t.Error("expected sandbox DeleteSandboxMetadata after last task destroyed")
+	}
+}

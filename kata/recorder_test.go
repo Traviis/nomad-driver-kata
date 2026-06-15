@@ -22,6 +22,7 @@ type recorder struct {
 	metrics    *containerMetrics
 	metricsErr error
 	runExit    int
+	runCh      chan struct{}
 	configs    []*ContainerConfig
 
 	createContainerErrFor map[string]error
@@ -138,6 +139,9 @@ func (r *recorder) StartTaskDetached(ctx context.Context, id string) error {
 
 func (r *recorder) RunTask(ctx context.Context, id string, stdout, stderr *os.File) (int, error) {
 	r.record("RunTask", id)
+	if r.runCh != nil {
+		<-r.runCh
+	}
 	return r.runExit, nil
 }
 
