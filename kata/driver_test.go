@@ -1026,3 +1026,98 @@ func TestWaitTaskExitCode(t *testing.T) {
 		t.Errorf("ExitCode = %d, want 42", result.ExitCode)
 	}
 }
+
+func TestTaskStats(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := d.TaskStats(ctx, cfg.ID, time.Millisecond)
+	if err != nil {
+		t.Fatalf("TaskStats: %v", err)
+	}
+
+	select {
+	case usage, ok := <-ch:
+		if !ok {
+			t.Fatal("stats channel closed unexpectedly")
+		}
+		if usage == nil {
+			t.Fatal("expected non-nil usage")
+		}
+		if usage.ResourceUsage == nil {
+			t.Fatal("expected non-nil ResourceUsage")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for stats")
+	}
+
+	cancel()
+	// Drain until channel closes
+	for range ch {
+	}
+}
+
+func TestTaskStatsContextCancellation(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := d.TaskStats(ctx, cfg.ID, time.Millisecond)
+	if err != nil {
+		t.Fatalf("TaskStats: %v", err)
+	}
+
+	cancel()
+
+	closed := false
+	timeout := time.After(3 * time.Second)
+	for !closed {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				closed = true
+			}
+		case <-timeout:
+			t.Fatal("stats channel not closed after context cancellation")
+		}
+	}
+}
+
+func TestTaskStatsMetricsError(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	rec.metricsErr = fmt.Errorf("containerd unavailable")
+
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := d.TaskStats(ctx, cfg.ID, time.Millisecond)
+	if err != nil {
+		t.Fatalf("TaskStats: %v", err)
+	}
+
+	// Let ticks fire with errors
+	time.Sleep(10 * time.Millisecond)
+
+	// Channel should still be open (errors are swallowed)
+	cancel()
+	for range ch {
+	}
+
+	if rec.callCount("Metrics") == 0 {
+		t.Error("expected Metrics calls despite errors")
+	}
+}

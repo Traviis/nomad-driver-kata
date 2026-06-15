@@ -20,6 +20,7 @@ type recorder struct {
 	versionErr error
 	running    map[string]bool
 	metrics    *containerMetrics
+	metricsErr error
 	runExit    int
 	configs    []*ContainerConfig
 
@@ -173,10 +174,13 @@ func (r *recorder) ExecStreaming(ctx context.Context, id, execID string, cmd []s
 
 func (r *recorder) Metrics(ctx context.Context, id string) (*containerMetrics, error) {
 	r.record("Metrics", id)
+	if r.metricsErr != nil {
+		return nil, r.metricsErr
+	}
 	if r.metrics != nil {
 		return r.metrics, nil
 	}
-	return &containerMetrics{}, nil
+	return &containerMetrics{Timestamp: time.Now()}, nil
 }
 
 func (r *recorder) Cleanup(ctx context.Context, id string) {
