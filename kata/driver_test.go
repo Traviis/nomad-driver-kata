@@ -960,3 +960,43 @@ func TestRecoverTaskNotRunning(t *testing.T) {
 		t.Error("expected error when container is not running")
 	}
 }
+
+func TestStartTaskRollbackOnContainerFailure(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	rec.createContainerErrFor = map[string]error{
+		"kata-alloc-1-web": fmt.Errorf("disk full"),
+	}
+
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	_, _, err := d.StartTask(cfg)
+	if err == nil {
+		t.Fatal("expected StartTask to fail")
+	}
+	if !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sbID := "kata-alloc-1-sandbox"
+	rec.mu.Lock()
+	var cleanupSandbox, deleteSandboxMeta bool
+	for _, c := range rec.calls {
+		if c.Method == "Cleanup" && len(c.Args) > 0 && c.Args[0] == sbID {
+			cleanupSandbox = true
+		}
+		if c.Method == "DeleteSandboxMetadata" && len(c.Args) > 0 && c.Args[0] == sbID {
+			deleteSandboxMeta = true
+		}
+	}
+	rec.mu.Unlock()
+
+	if !cleanupSandbox {
+		t.Error("expected sandbox Cleanup after rollback")
+	}
+	if !deleteSandboxMeta {
+		t.Error("expected sandbox DeleteSandboxMetadata after rollback")
+	}
+
+	if _, ok := d.tasks.Get(cfg.ID); ok {
+		t.Error("task should not be in store after failed start")
+	}
+}

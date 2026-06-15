@@ -22,6 +22,8 @@ type recorder struct {
 	metrics    *containerMetrics
 	runExit    int
 	configs    []*ContainerConfig
+
+	createContainerErrFor map[string]error
 }
 
 func newRecorder() *recorder {
@@ -108,8 +110,15 @@ func (r *recorder) DeleteSandboxMetadata(ctx context.Context, id string) error {
 func (r *recorder) CreateContainer(ctx context.Context, cfg *ContainerConfig) error {
 	r.mu.Lock()
 	r.configs = append(r.configs, cfg)
+	var errForID error
+	if r.createContainerErrFor != nil {
+		errForID = r.createContainerErrFor[cfg.ID]
+	}
 	r.mu.Unlock()
 	r.record("CreateContainer", cfg.ID, cfg.Image, cfg.Runtime)
+	if errForID != nil {
+		return errForID
+	}
 	return nil
 }
 
