@@ -1000,3 +1000,29 @@ func TestStartTaskRollbackOnContainerFailure(t *testing.T) {
 		t.Error("task should not be in store after failed start")
 	}
 }
+
+func TestWaitTaskExitCode(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	rec.runExit = 42
+
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := d.WaitTask(ctx, cfg.ID)
+	if err != nil {
+		t.Fatalf("WaitTask: %v", err)
+	}
+
+	result := <-ch
+	if result == nil {
+		t.Fatal("expected non-nil exit result")
+	}
+	if result.ExitCode != 42 {
+		t.Errorf("ExitCode = %d, want 42", result.ExitCode)
+	}
+}
