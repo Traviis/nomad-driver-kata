@@ -1202,3 +1202,151 @@ func TestDestroyTaskSandboxTeardown(t *testing.T) {
 		t.Error("expected sandbox DeleteSandboxMetadata after last task destroyed")
 	}
 }
+
+func TestRecoverMultipleTasksSameAlloc(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+
+	containerIDs := []string{"kata-alloc-1-web", "kata-alloc-1-sidecar"}
+	rec.mu.Lock()
+	for _, id := range containerIDs {
+		rec.running[id] = true
+	}
+	rec.mu.Unlock()
+
+	sbID := "kata-alloc-1-sandbox"
+
+	for i, cID := range containerIDs {
+		taskName := "web"
+		if i == 1 {
+			taskName = "sidecar"
+		}
+
+		state := &TaskState{
+			ContainerID: cID,
+			SandboxID:   sbID,
+			AllocID:     "alloc-1",
+			TaskName:    taskName,
+			StartedAt:   time.Now().UnixNano(),
+		}
+
+		cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+		cfg.ID = fmt.Sprintf("task-%d", i)
+		cfg.Name = taskName
+
+		handle := drivers.NewTaskHandle(taskHandleVersion)
+		handle.Config = cfg
+		if err := handle.SetDriverState(state); err != nil {
+			t.Fatalf("SetDriverState(%d): %v", i, err)
+		}
+
+		if err := d.RecoverTask(handle); err != nil {
+			t.Fatalf("RecoverTask(%d): %v", i, err)
+		}
+	}
+
+	for i := range containerIDs {
+		taskID := fmt.Sprintf("task-%d", i)
+		h, ok := d.tasks.Get(taskID)
+		if !ok {
+			t.Errorf("task %s should be in store after recovery", taskID)
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ch, err := d.WaitTask(ctx, taskID)
+		if err != nil {
+			cancel()
+			t.Fatalf("WaitTask(%s): %v", taskID, err)
+		}
+		<-ch
+		cancel()
+		_ = h
+	}
+
+	if rec.callCount("MonitorTask") != 2 {
+		t.Errorf("MonitorTask call count = %d, want 2", rec.callCount("MonitorTask"))
+	}
+}
+
+func TestRecoverThenDestroyTeardownsSandbox(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+
+	containerIDs := []string{"kata-alloc-1-web", "kata-alloc-1-sidecar"}
+	rec.mu.Lock()
+	for _, id := range containerIDs {
+		rec.running[id] = true
+	}
+	rec.mu.Unlock()
+
+	sbID := "kata-alloc-1-sandbox"
+
+	taskIDs := make([]string, 2)
+	for i, cID := range containerIDs {
+		taskName := "web"
+		if i == 1 {
+			taskName = "sidecar"
+		}
+		taskIDs[i] = fmt.Sprintf("task-%d", i)
+
+		state := &TaskState{
+			ContainerID: cID,
+			SandboxID:   sbID,
+			AllocID:     "alloc-1",
+			TaskName:    taskName,
+			StartedAt:   time.Now().UnixNano(),
+		}
+
+		cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+		cfg.ID = taskIDs[i]
+		cfg.Name = taskName
+
+		handle := drivers.NewTaskHandle(taskHandleVersion)
+		handle.Config = cfg
+		if err := handle.SetDriverState(state); err != nil {
+			t.Fatalf("SetDriverState: %v", err)
+		}
+		if err := d.RecoverTask(handle); err != nil {
+			t.Fatalf("RecoverTask: %v", err)
+		}
+	}
+
+	// Destroy first task — sandbox should survive
+	if err := d.DestroyTask(taskIDs[0], true); err != nil {
+		t.Fatalf("DestroyTask(0): %v", err)
+	}
+
+	rec.mu.Lock()
+	var earlyCleanup bool
+	for _, c := range rec.calls {
+		if c.Method == "Cleanup" && len(c.Args) > 0 && c.Args[0] == sbID {
+			earlyCleanup = true
+		}
+	}
+	rec.mu.Unlock()
+	if earlyCleanup {
+		t.Error("sandbox should not be cleaned up while second task exists")
+	}
+
+	// Destroy second task — sandbox should tear down
+	if err := d.DestroyTask(taskIDs[1], true); err != nil {
+		t.Fatalf("DestroyTask(1): %v", err)
+	}
+
+	rec.mu.Lock()
+	var finalCleanup, finalDeleteMeta bool
+	for _, c := range rec.calls {
+		if c.Method == "Cleanup" && len(c.Args) > 0 && c.Args[0] == sbID {
+			finalCleanup = true
+		}
+		if c.Method == "DeleteSandboxMetadata" && len(c.Args) > 0 && c.Args[0] == sbID {
+			finalDeleteMeta = true
+		}
+	}
+	rec.mu.Unlock()
+
+	if !finalCleanup {
+		t.Error("expected sandbox Cleanup after all recovered tasks destroyed")
+	}
+	if !finalDeleteMeta {
+		t.Error("expected sandbox DeleteSandboxMetadata after all recovered tasks destroyed")
+	}
+}
