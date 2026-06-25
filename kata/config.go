@@ -26,6 +26,7 @@ type PluginConfig struct {
 	ImagePullTimeout string `codec:"image_pull_timeout"`
 	GCImage          bool   `codec:"gc_image"`
 	GCImageDelay     string `codec:"gc_image_delay"`
+	ConsulGRPCAddr   string `codec:"consul_grpc_addr"`
 }
 
 // TaskAuth holds credentials for pulling from private registries.
@@ -102,6 +103,7 @@ var pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		hclspec.NewAttr("gc_image_delay", "string", false),
 		hclspec.NewLiteral(`"`+defaultGCImageDelay+`"`),
 	),
+	"consul_grpc_addr": hclspec.NewAttr("consul_grpc_addr", "string", false),
 })
 
 var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{

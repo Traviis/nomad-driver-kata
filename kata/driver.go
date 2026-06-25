@@ -2,9 +2,12 @@ package kata
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -143,6 +146,12 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	}
 
 	d.config = &config
+
+	if config.ConsulGRPCAddr != "" {
+		if _, _, err := net.SplitHostPort(config.ConsulGRPCAddr); err != nil {
+			return fmt.Errorf("parsing consul_grpc_addr %q: %w", config.ConsulGRPCAddr, err)
+		}
+	}
 	d.imagePullTimeout = dur
 
 	ctr, err := NewContainerdClient(config.ContainerdAddr, config.Namespace, d.logger)
@@ -352,6 +361,16 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 			source = filepath.Join(cfg.TaskDir().Dir, source)
 		}
 		mounts = append(mounts, bindMount(source, m.Target, m.Readonly, ""))
+	}
+
+	if d.config.ConsulGRPCAddr != "" {
+		bootstrapPath := filepath.Join(cfg.TaskDir().SecretsDir, "envoy_bootstrap.json")
+		if _, err := os.Stat(bootstrapPath); err == nil {
+			if err := rewriteEnvoyBootstrap(bootstrapPath, d.config.ConsulGRPCAddr); err != nil {
+				return nil, nil, fmt.Errorf("rewriting envoy bootstrap: %w", err)
+			}
+			d.logger.Info("rewrote envoy bootstrap for kata VM", "path", bootstrapPath, "consul_grpc_addr", d.config.ConsulGRPCAddr)
+		}
 	}
 
 	var memLimit int64
@@ -789,4 +808,116 @@ func addPortEnv(envVars []string, cfg *drivers.TaskConfig) []string {
 		envVars = append(envVars, fmt.Sprintf("%s%s=%d", taskenv.AllocPortPrefix, port.Label, value))
 	}
 	return envVars
+}
+
+func rewriteEnvoyBootstrap(path, consulAddr string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading bootstrap: %w", err)
+	}
+
+	var bootstrap map[string]interface{}
+	if err := json.Unmarshal(data, &bootstrap); err != nil {
+		return fmt.Errorf("parsing bootstrap JSON: %w", err)
+	}
+
+	host, portStr, err := net.SplitHostPort(consulAddr)
+	if err != nil {
+		return fmt.Errorf("invalid consul address %q: %w", consulAddr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid port in consul address %q: %w", consulAddr, err)
+	}
+
+	sr, ok := bootstrap["static_resources"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	clusters, ok := sr["clusters"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	tcpAddr := map[string]interface{}{
+		"socket_address": map[string]interface{}{
+			"address":    host,
+			"port_value": port,
+		},
+	}
+
+	modified := false
+	for _, c := range clusters {
+		cluster, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if cluster["name"] != "local_agent" {
+			continue
+		}
+		la, _ := jsonMap(cluster, "load_assignment", "loadAssignment")
+		if la == nil {
+			continue
+		}
+		endpoints, _ := jsonSlice(la, "endpoints")
+		if endpoints == nil {
+			continue
+		}
+		for _, ep := range endpoints {
+			epMap, ok := ep.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			lbEndpoints, _ := jsonSlice(epMap, "lb_endpoints", "lbEndpoints")
+			if lbEndpoints == nil {
+				continue
+			}
+			for _, lbe := range lbEndpoints {
+				lbeMap, ok := lbe.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				endpoint, ok := lbeMap["endpoint"].(map[string]interface{})
+				if !ok {
+					continue
+				}
+				addr, ok := endpoint["address"].(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if _, hasPipe := addr["pipe"]; hasPipe {
+					endpoint["address"] = tcpAddr
+					modified = true
+				}
+			}
+		}
+	}
+
+	if !modified {
+		return nil
+	}
+
+	out, err := json.MarshalIndent(bootstrap, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling bootstrap: %w", err)
+	}
+	return os.WriteFile(path, out, 0644)
+}
+
+func jsonMap(m map[string]interface{}, keys ...string) (map[string]interface{}, string) {
+	for _, k := range keys {
+		if v, ok := m[k].(map[string]interface{}); ok {
+			return v, k
+		}
+	}
+	return nil, ""
+}
+
+func jsonSlice(m map[string]interface{}, keys ...string) ([]interface{}, string) {
+	for _, k := range keys {
+		if v, ok := m[k].([]interface{}); ok {
+			return v, k
+		}
+	}
+	return nil, ""
 }

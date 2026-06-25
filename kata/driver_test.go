@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1525,5 +1526,251 @@ func TestRecoverThenDestroyTeardownsSandbox(t *testing.T) {
 	}
 	if !finalDeleteMeta {
 		t.Error("expected sandbox DeleteSandboxMetadata after all recovered tasks destroyed")
+	}
+}
+
+func testBootstrapJSON(pipePath string) []byte {
+	b := map[string]interface{}{
+		"static_resources": map[string]interface{}{
+			"clusters": []interface{}{
+				map[string]interface{}{
+					"name": "local_agent",
+					"load_assignment": map[string]interface{}{
+						"endpoints": []interface{}{
+							map[string]interface{}{
+								"lb_endpoints": []interface{}{
+									map[string]interface{}{
+										"endpoint": map[string]interface{}{
+											"address": map[string]interface{}{
+												"pipe": map[string]interface{}{
+													"path": pipePath,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(b, "", "  ")
+	return data
+}
+
+func TestRewriteEnvoyBootstrap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "envoy_bootstrap.json")
+	if err := os.WriteFile(path, testBootstrapJSON("alloc/tmp/consul_grpc.sock"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rewriteEnvoyBootstrap(path, "10.0.0.1:8502"); err != nil {
+		t.Fatalf("rewriteEnvoyBootstrap: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("parsing result: %v", err)
+	}
+
+	sr := result["static_resources"].(map[string]interface{})
+	clusters := sr["clusters"].([]interface{})
+	cluster := clusters[0].(map[string]interface{})
+	la := cluster["load_assignment"].(map[string]interface{})
+	eps := la["endpoints"].([]interface{})
+	lbes := eps[0].(map[string]interface{})["lb_endpoints"].([]interface{})
+	addr := lbes[0].(map[string]interface{})["endpoint"].(map[string]interface{})["address"].(map[string]interface{})
+
+	if _, hasPipe := addr["pipe"]; hasPipe {
+		t.Error("pipe address should have been removed")
+	}
+	sa, ok := addr["socket_address"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected socket_address in result")
+	}
+	if sa["address"] != "10.0.0.1" {
+		t.Errorf("address = %v, want 10.0.0.1", sa["address"])
+	}
+	if port, ok := sa["port_value"].(float64); !ok || int(port) != 8502 {
+		t.Errorf("port_value = %v, want 8502", sa["port_value"])
+	}
+}
+
+func TestRewriteEnvoyBootstrapCamelCase(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "envoy_bootstrap.json")
+	b := map[string]interface{}{
+		"static_resources": map[string]interface{}{
+			"clusters": []interface{}{
+				map[string]interface{}{
+					"name": "local_agent",
+					"loadAssignment": map[string]interface{}{
+						"endpoints": []interface{}{
+							map[string]interface{}{
+								"lbEndpoints": []interface{}{
+									map[string]interface{}{
+										"endpoint": map[string]interface{}{
+											"address": map[string]interface{}{
+												"pipe": map[string]interface{}{
+													"path": "alloc/tmp/consul_grpc.sock",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(b, "", "  ")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rewriteEnvoyBootstrap(path, "10.0.0.1:8502"); err != nil {
+		t.Fatalf("rewriteEnvoyBootstrap: %v", err)
+	}
+
+	result, _ := os.ReadFile(path)
+	if strings.Contains(string(result), "pipe") {
+		t.Error("pipe address should have been removed")
+	}
+	if !strings.Contains(string(result), "socket_address") {
+		t.Error("should contain socket_address after rewrite")
+	}
+	if !strings.Contains(string(result), "10.0.0.1") {
+		t.Error("should contain the consul address")
+	}
+}
+
+func TestRewriteEnvoyBootstrapNoLocalAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "envoy_bootstrap.json")
+	original := []byte(`{"static_resources":{"clusters":[{"name":"other_cluster"}]}}`)
+	if err := os.WriteFile(path, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rewriteEnvoyBootstrap(path, "10.0.0.1:8502"); err != nil {
+		t.Fatalf("rewriteEnvoyBootstrap: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != string(original) {
+		t.Error("file should not have been modified")
+	}
+}
+
+func TestRewriteEnvoyBootstrapNoPipe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "envoy_bootstrap.json")
+	b := map[string]interface{}{
+		"static_resources": map[string]interface{}{
+			"clusters": []interface{}{
+				map[string]interface{}{
+					"name": "local_agent",
+					"load_assignment": map[string]interface{}{
+						"endpoints": []interface{}{
+							map[string]interface{}{
+								"lb_endpoints": []interface{}{
+									map[string]interface{}{
+										"endpoint": map[string]interface{}{
+											"address": map[string]interface{}{
+												"socket_address": map[string]interface{}{
+													"address":    "10.0.0.1",
+													"port_value": 8502,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	original, _ := json.MarshalIndent(b, "", "  ")
+	if err := os.WriteFile(path, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rewriteEnvoyBootstrap(path, "10.0.0.1:8502"); err != nil {
+		t.Fatalf("rewriteEnvoyBootstrap: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != string(original) {
+		t.Error("file should not have been modified when no pipe address exists")
+	}
+}
+
+func TestStartTaskRewritesBootstrap(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	d.config.ConsulGRPCAddr = "10.0.0.1:8502"
+
+	allocDir := t.TempDir()
+	taskCfg := &TaskConfig{Image: "envoyproxy/envoy:v1.34.7"}
+	cfg := &drivers.TaskConfig{
+		ID:            "test-task-id",
+		AllocID:       "alloc-1",
+		Name:          "connect-proxy",
+		TaskGroupName: "group",
+		AllocDir:      allocDir,
+	}
+	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
+		t.Fatalf("encoding driver config: %v", err)
+	}
+
+	secretsDir := filepath.Join(allocDir, "connect-proxy", "secrets")
+	if err := os.MkdirAll(secretsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapPath := filepath.Join(secretsDir, "envoy_bootstrap.json")
+	if err := os.WriteFile(bootstrapPath, testBootstrapJSON("alloc/tmp/consul_grpc.sock"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	_ = rec
+
+	data, err := os.ReadFile(bootstrapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "pipe") {
+		t.Error("bootstrap should have been rewritten to remove pipe address")
+	}
+	if !strings.Contains(string(data), "socket_address") {
+		t.Error("bootstrap should contain socket_address after rewrite")
+	}
+}
+
+func TestStartTaskSkipsRewriteWithoutBootstrap(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	d.config.ConsulGRPCAddr = "10.0.0.1:8502"
+
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	handle, _, err := d.StartTask(cfg)
+	if err != nil {
+		t.Fatalf("StartTask should succeed without bootstrap file: %v", err)
+	}
+	if handle == nil {
+		t.Fatal("expected non-nil handle")
 	}
 }
