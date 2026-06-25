@@ -23,6 +23,7 @@ import (
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/containerd/errdefs"
+	"github.com/distribution/reference"
 	"github.com/hashicorp/go-hclog"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/unix"
@@ -128,6 +129,12 @@ func (c *containerdClient) Version(ctx context.Context) (string, error) {
 func (c *containerdClient) EnsureImage(ctx context.Context, ref string, forcePull bool, username, password string) error {
 	ctx = c.nsCtx(ctx)
 
+	named, err := reference.ParseDockerRef(ref)
+	if err != nil {
+		return fmt.Errorf("normalizing image reference %q: %w", ref, err)
+	}
+	ref = named.String()
+
 	if !forcePull {
 		_, err := c.client.GetImage(ctx, ref)
 		if err == nil {
@@ -158,7 +165,7 @@ func (c *containerdClient) EnsureImage(ctx context.Context, ref string, forcePul
 		}
 	}
 
-	_, err := c.client.Pull(ctx, ref, pullOpts...)
+	_, err = c.client.Pull(ctx, ref, pullOpts...)
 	return err
 }
 
