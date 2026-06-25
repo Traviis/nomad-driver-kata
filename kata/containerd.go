@@ -1,6 +1,7 @@
 package kata
 
 import (
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -35,6 +36,7 @@ type Containerd interface {
 	Version(ctx context.Context) (string, error)
 
 	EnsureImage(ctx context.Context, ref string, forcePull bool, username, password string) error
+	ImageConfig(ctx context.Context, ref string) (ocispec.ImageConfig, error)
 	CreateSandboxMetadata(ctx context.Context, id, runtime string) error
 	DeleteSandboxMetadata(ctx context.Context, id string) error
 	CreateContainer(ctx context.Context, cfg *ContainerConfig) error
@@ -167,6 +169,32 @@ func (c *containerdClient) EnsureImage(ctx context.Context, ref string, forcePul
 
 	_, err = c.client.Pull(ctx, ref, pullOpts...)
 	return err
+}
+
+func (c *containerdClient) ImageConfig(ctx context.Context, ref string) (ocispec.ImageConfig, error) {
+	ctx = c.nsCtx(ctx)
+	image, err := c.client.GetImage(ctx, ref)
+	if err != nil {
+		return ocispec.ImageConfig{}, fmt.Errorf("getting image %s: %w", ref, err)
+	}
+	configDesc, err := image.Config(ctx)
+	if err != nil {
+		return ocispec.ImageConfig{}, fmt.Errorf("reading image config descriptor: %w", err)
+	}
+	p, err := image.ContentStore().ReaderAt(ctx, configDesc)
+	if err != nil {
+		return ocispec.ImageConfig{}, fmt.Errorf("reading image config: %w", err)
+	}
+	defer p.Close()
+	data := make([]byte, configDesc.Size)
+	if _, err := p.ReadAt(data, 0); err != nil {
+		return ocispec.ImageConfig{}, fmt.Errorf("reading image config bytes: %w", err)
+	}
+	var img ocispec.Image
+	if err := json.Unmarshal(data, &img); err != nil {
+		return ocispec.ImageConfig{}, fmt.Errorf("unmarshaling image config: %w", err)
+	}
+	return img.Config, nil
 }
 
 func (c *containerdClient) CreateSandboxMetadata(ctx context.Context, id, runtime string) error {

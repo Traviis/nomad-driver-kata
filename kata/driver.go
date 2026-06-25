@@ -296,11 +296,12 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("pulling image %s: %w", taskCfg.Image, err)
 	}
 
-	var command []string
-	if taskCfg.Command != "" {
-		command = append(command, taskCfg.Command)
-		command = append(command, taskCfg.Args...)
+	imgCfg, err := d.ctr.ImageConfig(ctx, taskCfg.Image)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading image config: %w", err)
 	}
+
+	command := mergeCommand(imgCfg.Entrypoint, imgCfg.Cmd, taskCfg.Command, taskCfg.Args)
 
 	annotations := map[string]string{
 		"io.kubernetes.cri-o.ContainerType": "container",
@@ -808,6 +809,27 @@ func addPortEnv(envVars []string, cfg *drivers.TaskConfig) []string {
 		envVars = append(envVars, fmt.Sprintf("%s%s=%d", taskenv.AllocPortPrefix, port.Label, value))
 	}
 	return envVars
+}
+
+func mergeCommand(imageEntrypoint, imageCmd []string, taskCommand string, taskArgs []string) []string {
+	var cmd []string
+	switch {
+	case taskCommand != "":
+		cmd = make([]string, 1+len(taskArgs))
+		cmd[0] = taskCommand
+		copy(cmd[1:], taskArgs)
+	case len(taskArgs) > 0:
+		cmd = taskArgs
+	default:
+		cmd = imageCmd
+	}
+	if len(imageEntrypoint) == 0 {
+		return cmd
+	}
+	result := make([]string, len(imageEntrypoint)+len(cmd))
+	copy(result, imageEntrypoint)
+	copy(result[len(imageEntrypoint):], cmd)
+	return result
 }
 
 func rewriteEnvoyBootstrap(path, consulAddr string) error {

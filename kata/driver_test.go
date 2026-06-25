@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/hashicorp/go-hclog"
+	"slices"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/plugins/drivers"
@@ -1772,5 +1774,142 @@ func TestStartTaskSkipsRewriteWithoutBootstrap(t *testing.T) {
 	}
 	if handle == nil {
 		t.Fatal("expected non-nil handle")
+	}
+}
+func TestMergeCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		ep      []string
+		cmd     []string
+		taskCmd string
+		taskArgs []string
+		want    []string
+	}{
+		{
+			name: "image entrypoint and cmd",
+			ep:   []string{"/init"},
+			cmd:  []string{"start"},
+			want: []string{"/init", "start"},
+		},
+		{
+			name:    "command overrides cmd, entrypoint preserved",
+			ep:      []string{"/init"},
+			cmd:     []string{"start"},
+			taskCmd: "run",
+			want:    []string{"/init", "run"},
+		},
+		{
+			name:     "command with args, entrypoint preserved",
+			ep:       []string{"/init"},
+			cmd:      []string{"start"},
+			taskCmd:  "run",
+			taskArgs: []string{"--flag"},
+			want:     []string{"/init", "run", "--flag"},
+		},
+		{
+			name:     "args only overrides cmd",
+			ep:       []string{"/init"},
+			cmd:      []string{"start"},
+			taskArgs: []string{"serve"},
+			want:     []string{"/init", "serve"},
+		},
+		{
+			name:    "empty entrypoint, command set",
+			cmd:     []string{"python", "app.py"},
+			taskCmd: "/init",
+			want:    []string{"/init"},
+		},
+		{
+			name: "empty entrypoint, no override",
+			cmd:  []string{"python", "app.py"},
+			want: []string{"python", "app.py"},
+		},
+		{
+			name:    "empty entrypoint, no double prepend",
+			taskCmd: "/init",
+			want:    []string{"/init"},
+		},
+		{
+			name:     "multi-element entrypoint",
+			ep:       []string{"/bin/sh", "-c"},
+			cmd:      []string{"echo hello"},
+			taskArgs: []string{"echo bye"},
+			want:     []string{"/bin/sh", "-c", "echo bye"},
+		},
+		{
+			name: "all empty",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeCommand(tt.ep, tt.cmd, tt.taskCmd, tt.taskArgs)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("mergeCommand(%v, %v, %q, %v) = %v, want %v",
+					tt.ep, tt.cmd, tt.taskCmd, tt.taskArgs, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartTaskEntrypoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		imgCfg   ocispec.ImageConfig
+		taskCfg  TaskConfig
+		wantCmd  []string
+	}{
+		{
+			name: "no override uses image entrypoint and cmd",
+			imgCfg: ocispec.ImageConfig{
+				Entrypoint: []string{"/entrypoint.sh"},
+				Cmd:        []string{"default-arg"},
+			},
+			taskCfg: TaskConfig{Image: "test:latest"},
+			wantCmd: []string{"/entrypoint.sh", "default-arg"},
+		},
+		{
+			name: "command override preserves entrypoint",
+			imgCfg: ocispec.ImageConfig{
+				Entrypoint: []string{"/entrypoint.sh"},
+				Cmd:        []string{"default-arg"},
+			},
+			taskCfg: TaskConfig{Image: "test:latest", Command: "custom-cmd", Args: []string{"--flag"}},
+			wantCmd: []string{"/entrypoint.sh", "custom-cmd", "--flag"},
+		},
+		{
+			name: "args only override replaces cmd",
+			imgCfg: ocispec.ImageConfig{
+				Entrypoint: []string{"/entrypoint.sh"},
+				Cmd:        []string{"default-arg"},
+			},
+			taskCfg: TaskConfig{Image: "test:latest", Args: []string{"override-arg"}},
+			wantCmd: []string{"/entrypoint.sh", "override-arg"},
+		},
+		{
+			name: "empty entrypoint image",
+			imgCfg: ocispec.ImageConfig{
+				Cmd: []string{"python", "app.py"},
+			},
+			taskCfg: TaskConfig{Image: "test:latest", Command: "bash"},
+			wantCmd: []string{"bash"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, rec := testDriverWithRecorder(t)
+			rec.imageConfig = tt.imgCfg
+			cfg := testTaskConfig(t, &tt.taskCfg)
+			_, _, err := d.StartTask(cfg)
+			if err != nil {
+				t.Fatalf("StartTask: %v", err)
+			}
+			cc := rec.lastConfig()
+			if cc == nil {
+				t.Fatal("no ContainerConfig recorded")
+			}
+			if !slices.Equal(cc.Command, tt.wantCmd) {
+				t.Errorf("Command = %v, want %v", cc.Command, tt.wantCmd)
+			}
+		})
 	}
 }

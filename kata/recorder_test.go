@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"io"
 	"os"
 	"sync"
@@ -24,6 +25,7 @@ type recorder struct {
 	runExit    int
 	runCh      chan struct{}
 	configs    []*ContainerConfig
+	imageConfig ocispec.ImageConfig
 
 	createContainerErrFor map[string]error
 }
@@ -97,6 +99,11 @@ func (r *recorder) Version(ctx context.Context) (string, error) {
 func (r *recorder) EnsureImage(ctx context.Context, ref string, forcePull bool, username, password string) error {
 	r.record("EnsureImage", ref, forcePull, username, password)
 	return nil
+}
+
+func (r *recorder) ImageConfig(ctx context.Context, ref string) (ocispec.ImageConfig, error) {
+	r.record("ImageConfig", ref)
+	return r.imageConfig, nil
 }
 
 func (r *recorder) CreateSandboxMetadata(ctx context.Context, id, runtime string) error {
