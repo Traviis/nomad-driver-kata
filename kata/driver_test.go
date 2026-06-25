@@ -625,8 +625,8 @@ func TestStartTask(t *testing.T) {
 	if cc == nil {
 		t.Fatal("no ContainerConfig recorded")
 	}
-	if cc.Image != "alpine:latest" {
-		t.Errorf("Image = %q, want %q", cc.Image, "alpine:latest")
+	if cc.Image != "docker.io/library/alpine:latest" {
+		t.Errorf("Image = %q, want %q", cc.Image, "docker.io/library/alpine:latest")
 	}
 	if cc.Runtime != defaultRuntime {
 		t.Errorf("Runtime = %q, want %q", cc.Runtime, defaultRuntime)

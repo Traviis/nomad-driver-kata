@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/client/allocdir"
 	"github.com/hashicorp/nomad/client/taskenv"
@@ -250,6 +251,9 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	if taskCfg.Image == "" {
 		return nil, nil, fmt.Errorf("image is required")
+	}
+	if named, err := reference.ParseDockerRef(taskCfg.Image); err == nil {
+		taskCfg.Image = named.String()
 	}
 
 	d.logger.Info("starting task", "alloc_id", cfg.AllocID, "task", cfg.Name, "image", taskCfg.Image)
