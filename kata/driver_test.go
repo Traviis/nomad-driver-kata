@@ -759,6 +759,49 @@ func TestStartTaskVolumeInvalid(t *testing.T) {
 	}
 }
 
+func TestStartTaskVolumeRelativePath(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	taskCfg := &TaskConfig{
+		Image: "alpine:latest",
+		Volumes: []string{
+			"local/init.sql:/docker-entrypoint-initdb.d/init.sql",
+		},
+	}
+	cfg := &drivers.TaskConfig{
+		ID:            "test-task-id",
+		AllocID:       "alloc-1",
+		Name:          "web",
+		TaskGroupName: "group",
+		AllocDir:      "/opt/nomad/alloc/abc123",
+	}
+	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
+		t.Fatalf("encoding driver config: %v", err)
+	}
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	cc := rec.lastConfig()
+	if cc == nil {
+		t.Fatal("no ContainerConfig recorded")
+	}
+
+	// 5 standard mounts + 1 volume = 6
+	if len(cc.Mounts) != 6 {
+		t.Fatalf("expected 6 mounts, got %d: %+v", len(cc.Mounts), cc.Mounts)
+	}
+
+	vol := cc.Mounts[5]
+	wantSource := "/opt/nomad/alloc/abc123/web/local/init.sql"
+	if vol.Source != wantSource {
+		t.Errorf("volume source = %q, want %q", vol.Source, wantSource)
+	}
+	if vol.Destination != "/docker-entrypoint-initdb.d/init.sql" {
+		t.Errorf("volume dest = %q, want /docker-entrypoint-initdb.d/init.sql", vol.Destination)
+	}
+}
+
 func TestStartTaskMountBlocks(t *testing.T) {
 	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{

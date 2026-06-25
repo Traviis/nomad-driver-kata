@@ -335,15 +335,23 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		if len(parts) < 2 {
 			return nil, nil, fmt.Errorf("invalid volume %q: expected source:dest[:ro]", v)
 		}
+		source := parts[0]
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(cfg.TaskDir().Dir, source)
+		}
 		readonly := len(parts) == 3 && parts[2] == "ro"
-		mounts = append(mounts, bindMount(parts[0], parts[1], readonly, ""))
+		mounts = append(mounts, bindMount(source, parts[1], readonly, ""))
 	}
 
 	for _, m := range taskCfg.Mounts {
 		if m.Source == "" || m.Target == "" {
 			return nil, nil, fmt.Errorf("mount requires source and target")
 		}
-		mounts = append(mounts, bindMount(m.Source, m.Target, m.Readonly, ""))
+		source := m.Source
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(cfg.TaskDir().Dir, source)
+		}
+		mounts = append(mounts, bindMount(source, m.Target, m.Readonly, ""))
 	}
 
 	var memLimit int64
