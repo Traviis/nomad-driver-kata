@@ -34,6 +34,14 @@ type TaskAuth struct {
 	Password string `codec:"password"`
 }
 
+// MountConfig holds a structured mount declaration from the job spec.
+type MountConfig struct {
+	Type     string `codec:"type"`
+	Source   string `codec:"source"`
+	Target   string `codec:"target"`
+	Readonly bool   `codec:"readonly"`
+}
+
 // TaskConfig holds per-task settings from the job spec.
 type TaskConfig struct {
 	Image          string            `codec:"image"`
@@ -49,6 +57,8 @@ type TaskConfig struct {
 	CapDrop        []string          `codec:"cap_drop"`
 	ExtraHosts     []string          `codec:"extra_hosts"`
 	Devices        []string          `codec:"devices"`
+	Volumes        []string          `codec:"volumes"`
+	Mounts         []MountConfig     `codec:"mount"`
 	Auth           TaskAuth          `codec:"auth"`
 	Ulimit         map[string]string `codec:"ulimit"`
 	Labels         map[string]string `codec:"labels"`
@@ -112,6 +122,13 @@ var taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		"username": hclspec.NewAttr("username", "string", false),
 		"password": hclspec.NewAttr("password", "string", false),
 	})),
-	"ulimit": hclspec.NewAttr("ulimit", "map(string)", false),
-	"labels": hclspec.NewAttr("labels", "map(string)", false),
+	"ulimit":  hclspec.NewAttr("ulimit", "map(string)", false),
+	"labels":  hclspec.NewAttr("labels", "map(string)", false),
+	"volumes": hclspec.NewAttr("volumes", "list(string)", false),
+	"mount": hclspec.NewBlockList("mount", hclspec.NewObject(map[string]*hclspec.Spec{
+		"type":     hclspec.NewAttr("type", "string", false),
+		"source":   hclspec.NewAttr("source", "string", true),
+		"target":   hclspec.NewAttr("target", "string", true),
+		"readonly": hclspec.NewAttr("readonly", "bool", false),
+	})),
 })

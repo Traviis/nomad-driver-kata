@@ -694,6 +694,140 @@ func TestStartTaskPassesOptions(t *testing.T) {
 	}
 }
 
+func TestStartTaskVolumes(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{
+		Image: "alpine:latest",
+		Volumes: []string{
+			"/host/data:/container/data",
+			"/host/config:/container/config:ro",
+		},
+	})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	cc := rec.lastConfig()
+	if cc == nil {
+		t.Fatal("no ContainerConfig recorded")
+	}
+
+	// 5 standard mounts + 2 volumes = 7
+	if len(cc.Mounts) != 7 {
+		t.Fatalf("expected 7 mounts, got %d: %+v", len(cc.Mounts), cc.Mounts)
+	}
+
+	dataMount := cc.Mounts[5]
+	if dataMount.Source != "/host/data" || dataMount.Destination != "/container/data" {
+		t.Errorf("volume[0] = %s:%s, want /host/data:/container/data", dataMount.Source, dataMount.Destination)
+	}
+	for _, opt := range dataMount.Options {
+		if opt == "ro" {
+			t.Error("volume[0] should not be readonly")
+		}
+	}
+
+	configMount := cc.Mounts[6]
+	if configMount.Source != "/host/config" || configMount.Destination != "/container/config" {
+		t.Errorf("volume[1] = %s:%s, want /host/config:/container/config", configMount.Source, configMount.Destination)
+	}
+	hasRo := false
+	for _, opt := range configMount.Options {
+		if opt == "ro" {
+			hasRo = true
+		}
+	}
+	if !hasRo {
+		t.Error("volume[1] should be readonly")
+	}
+}
+
+func TestStartTaskVolumeInvalid(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{
+		Image:   "alpine:latest",
+		Volumes: []string{"no-colon-here"},
+	})
+
+	_, _, err := d.StartTask(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid volume string")
+	}
+	if !strings.Contains(err.Error(), "invalid volume") {
+		t.Errorf("error = %q, want it to contain 'invalid volume'", err)
+	}
+}
+
+func TestStartTaskMountBlocks(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{
+		Image: "alpine:latest",
+		Mounts: []MountConfig{
+			{Type: "bind", Source: "/mnt/data", Target: "/data", Readonly: false},
+			{Type: "bind", Source: "/mnt/cache", Target: "/cache", Readonly: true},
+		},
+	})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	cc := rec.lastConfig()
+	if cc == nil {
+		t.Fatal("no ContainerConfig recorded")
+	}
+
+	// 5 standard mounts + 2 mount blocks = 7
+	if len(cc.Mounts) != 7 {
+		t.Fatalf("expected 7 mounts, got %d: %+v", len(cc.Mounts), cc.Mounts)
+	}
+
+	dataMount := cc.Mounts[5]
+	if dataMount.Source != "/mnt/data" || dataMount.Destination != "/data" {
+		t.Errorf("mount[0] = %s:%s, want /mnt/data:/data", dataMount.Source, dataMount.Destination)
+	}
+
+	cacheMount := cc.Mounts[6]
+	if cacheMount.Source != "/mnt/cache" || cacheMount.Destination != "/cache" {
+		t.Errorf("mount[1] = %s:%s, want /mnt/cache:/cache", cacheMount.Source, cacheMount.Destination)
+	}
+	hasRo := false
+	for _, opt := range cacheMount.Options {
+		if opt == "ro" {
+			hasRo = true
+		}
+	}
+	if !hasRo {
+		t.Error("mount[1] should be readonly")
+	}
+}
+
+func TestStartTaskMountEmptySourceOrTarget(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+
+	cfg := testTaskConfig(t, &TaskConfig{
+		Image:  "alpine:latest",
+		Mounts: []MountConfig{{Type: "bind", Source: "", Target: "/data"}},
+	})
+	_, _, err := d.StartTask(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty mount source")
+	}
+	if !strings.Contains(err.Error(), "mount requires source and target") {
+		t.Errorf("error = %q, want it to contain 'mount requires source and target'", err)
+	}
+
+	cfg = testTaskConfig(t, &TaskConfig{
+		Image:  "alpine:latest",
+		Mounts: []MountConfig{{Type: "bind", Source: "/data", Target: ""}},
+	})
+	_, _, err = d.StartTask(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty mount target")
+	}
+}
+
 func TestDestroyTask(t *testing.T) {
 	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})

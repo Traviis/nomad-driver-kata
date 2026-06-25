@@ -326,6 +326,22 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("building mounts: %w", err)
 	}
 
+	for _, v := range taskCfg.Volumes {
+		parts := strings.SplitN(v, ":", 3)
+		if len(parts) < 2 {
+			return nil, nil, fmt.Errorf("invalid volume %q: expected source:dest[:ro]", v)
+		}
+		readonly := len(parts) == 3 && parts[2] == "ro"
+		mounts = append(mounts, bindMount(parts[0], parts[1], readonly, ""))
+	}
+
+	for _, m := range taskCfg.Mounts {
+		if m.Source == "" || m.Target == "" {
+			return nil, nil, fmt.Errorf("mount requires source and target")
+		}
+		mounts = append(mounts, bindMount(m.Source, m.Target, m.Readonly, ""))
+	}
+
 	var memLimit int64
 	var cpuQuota, cpuPeriod int64
 	if cfg.Resources != nil && cfg.Resources.LinuxResources != nil {
