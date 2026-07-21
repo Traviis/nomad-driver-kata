@@ -15,16 +15,17 @@ type call struct {
 }
 
 type recorder struct {
-	mu         sync.Mutex
-	calls      []call
-	version    string
-	versionErr error
-	running    map[string]bool
-	metrics    *containerMetrics
-	metricsErr error
-	runExit    int
-	runCh      chan struct{}
-	configs    []*ContainerConfig
+	mu          sync.Mutex
+	calls       []call
+	version     string
+	versionErr  error
+	running     map[string]bool
+	metrics     *containerMetrics
+	metricsErr  error
+	runExit     int
+	runErr      error
+	runCh       chan struct{}
+	configs     []*ContainerConfig
 	imageConfig ocispec.ImageConfig
 
 	createContainerErrFor map[string]error
@@ -149,7 +150,7 @@ func (r *recorder) RunTask(ctx context.Context, id string, stdout, stderr *os.Fi
 	if r.runCh != nil {
 		<-r.runCh
 	}
-	return r.runExit, nil
+	return r.runExit, r.runErr
 }
 
 func (r *recorder) MonitorTask(ctx context.Context, id string, stdout, stderr *os.File) (int, error) {
