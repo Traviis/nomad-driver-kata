@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/hashicorp/go-hclog"
-	"slices"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/plugins/drivers"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"slices"
 )
 
 func testDriver() *Driver {
@@ -1030,6 +1030,33 @@ func TestWaitTask(t *testing.T) {
 	}
 }
 
+func TestInspectTask(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	status, err := d.InspectTask(cfg.ID)
+	if err != nil {
+		t.Fatalf("InspectTask: %v", err)
+	}
+	// NOTE: TaskStatus.ID currently reports the container ID, not cfg.ID.
+	// Whether that is correct is an open question in docs/TEST_GAPS.md.
+	if status.State != drivers.TaskStateRunning {
+		t.Errorf("State = %q, want %q", status.State, drivers.TaskStateRunning)
+	}
+}
+
+func TestInspectTaskNotFound(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	_, err := d.InspectTask("nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown task")
+	}
+}
+
 func TestWaitTaskNotFound(t *testing.T) {
 	d, _ := testDriverWithRecorder(t)
 	_, err := d.WaitTask(context.Background(), "nonexistent")
@@ -1778,12 +1805,12 @@ func TestStartTaskSkipsRewriteWithoutBootstrap(t *testing.T) {
 }
 func TestMergeCommand(t *testing.T) {
 	tests := []struct {
-		name    string
-		ep      []string
-		cmd     []string
-		taskCmd string
+		name     string
+		ep       []string
+		cmd      []string
+		taskCmd  string
 		taskArgs []string
-		want    []string
+		want     []string
 	}{
 		{
 			name: "image entrypoint and cmd",
@@ -1853,10 +1880,10 @@ func TestMergeCommand(t *testing.T) {
 
 func TestStartTaskEntrypoint(t *testing.T) {
 	tests := []struct {
-		name     string
-		imgCfg   ocispec.ImageConfig
-		taskCfg  TaskConfig
-		wantCmd  []string
+		name    string
+		imgCfg  ocispec.ImageConfig
+		taskCfg TaskConfig
+		wantCmd []string
 	}{
 		{
 			name: "no override uses image entrypoint and cmd",
