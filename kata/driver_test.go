@@ -1090,6 +1090,17 @@ func TestSignalTask(t *testing.T) {
 	}
 }
 
+func TestSignalTaskNotFound(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	err := d.SignalTask("nonexistent", "SIGUSR1")
+	if err == nil {
+		t.Fatal("expected error for unknown task")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found', got: %v", err)
+	}
+}
+
 func TestExecTask(t *testing.T) {
 	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
