@@ -588,6 +588,67 @@ func TestBuildFingerprintUnhealthy(t *testing.T) {
 		t.Errorf("Health = %v, want HealthStateUnhealthy", fp.Health)
 	}
 }
+
+func TestFingerprintChannelEmitsImmediately(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := d.Fingerprint(ctx)
+	if err != nil {
+		t.Fatalf("Fingerprint: %v", err)
+	}
+
+	select {
+	case fp := <-ch:
+		if fp == nil {
+			t.Fatal("expected non-nil fingerprint")
+		}
+		if fp.Health != drivers.HealthStateHealthy {
+			t.Errorf("Health = %v, want HealthStateHealthy", fp.Health)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("fingerprint channel did not emit within timeout")
+	}
+
+	// Cancel context to stop the goroutine (blocked on 30s ticker).
+	cancel()
+
+	// Give goroutine time to exit and close channel.
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestFingerprintChannelContextCancellation(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := d.Fingerprint(ctx)
+	if err != nil {
+		t.Fatalf("Fingerprint: %v", err)
+	}
+
+	// Receive the first (immediate) fingerprint.
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fingerprint channel did not emit within timeout")
+	}
+
+	// Cancel context — goroutine should exit and close channel.
+	cancel()
+
+	// Channel should be closed after cancellation (no more values).
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("expected closed channel after context cancellation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("channel not closed after cancel within timeout")
+	}
+}
+
 func testTaskConfig(t *testing.T, taskCfg *TaskConfig) *drivers.TaskConfig {
 	t.Helper()
 	cfg := &drivers.TaskConfig{
