@@ -1126,6 +1126,35 @@ func TestWaitTaskNotFound(t *testing.T) {
 	}
 }
 
+func TestWaitTaskContextCancellation(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	// Cancel context before the task exits.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ch, err := d.WaitTask(ctx, cfg.ID)
+	if err != nil {
+		t.Fatalf("WaitTask: %v", err)
+	}
+
+	result := <-ch
+	if result == nil {
+		t.Fatal("expected non-nil exit result")
+	}
+	if result.Err == nil {
+		t.Error("expected context error in ExitResult")
+	}
+	if !strings.Contains(result.Err.Error(), "context canceled") {
+		t.Errorf("error should mention 'context canceled', got: %v", result.Err)
+	}
+}
+
 func TestSignalTask(t *testing.T) {
 	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
