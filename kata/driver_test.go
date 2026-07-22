@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
+	"github.com/hashicorp/nomad/plugins/base"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/plugins/drivers"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -2191,5 +2192,129 @@ func TestTaskEvents(t *testing.T) {
 		default:
 			return // no more events available
 		}
+	}
+}
+
+func TestSetConfigBadMsgPack(t *testing.T) {
+	d := testDriver()
+	// Malformed msgpack bytes
+	badCfg := &base.Config{
+		PluginConfig: []byte{0xff, 0xfe, 0xfd},
+	}
+	err := d.SetConfig(badCfg)
+	if err == nil {
+		t.Fatal("expected error for bad msgpack")
+	}
+	if !strings.Contains(err.Error(), "decoding plugin config") {
+		t.Errorf("error should mention 'decoding plugin config', got: %v", err)
+	}
+}
+
+func TestSetConfigBadImagePullTimeout(t *testing.T) {
+	d := testDriver()
+	cfg := &base.Config{
+		PluginConfig: mustMsgPack(t, map[string]interface{}{
+			"image_pull_timeout": "not-a-duration",
+		}),
+	}
+	err := d.SetConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error for bad image_pull_timeout")
+	}
+	if !strings.Contains(err.Error(), "parsing image_pull_timeout") {
+		t.Errorf("error should mention 'parsing image_pull_timeout', got: %v", err)
+	}
+}
+
+func TestSetConfigBadGCImageDelay(t *testing.T) {
+	d := testDriver()
+	cfg := &base.Config{
+		PluginConfig: mustMsgPack(t, map[string]interface{}{
+			"gc_image_delay": "not-a-duration",
+		}),
+	}
+	err := d.SetConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error for bad gc_image_delay")
+	}
+	if !strings.Contains(err.Error(), "parsing gc_image_delay") {
+		t.Errorf("error should mention 'parsing gc_image_delay', got: %v", err)
+	}
+}
+
+func TestSetConfigBadConsulAddr(t *testing.T) {
+	d := testDriver()
+	cfg := &base.Config{
+		PluginConfig: mustMsgPack(t, map[string]interface{}{
+			"consul_grpc_addr": "not-a-port",
+		}),
+	}
+	err := d.SetConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error for bad consul_grpc_addr")
+	}
+	if !strings.Contains(err.Error(), "parsing consul_grpc_addr") {
+		t.Errorf("error should mention 'parsing consul_grpc_addr', got: %v", err)
+	}
+}
+
+func TestSetConfigDefaultsApplied(t *testing.T) {
+	d := testDriver()
+	cfg := &base.Config{
+		PluginConfig: mustMsgPack(t, map[string]interface{}{}),
+	}
+	err := d.SetConfig(cfg)
+	if err != nil {
+		t.Fatalf("SetConfig with empty config should succeed (or fail on containerd connect): %v", err)
+	}
+	if d.config.ContainerdAddr != defaultContainerdAddr {
+		t.Errorf("ContainerdAddr = %q, want %q", d.config.ContainerdAddr, defaultContainerdAddr)
+	}
+	if d.config.Namespace != defaultNamespace {
+		t.Errorf("Namespace = %q, want %q", d.config.Namespace, defaultNamespace)
+	}
+	if d.config.PauseImage != defaultPauseImage {
+		t.Errorf("PauseImage = %q, want %q", d.config.PauseImage, defaultPauseImage)
+	}
+	if d.config.Runtime != defaultRuntime {
+		t.Errorf("Runtime = %q, want %q", d.config.Runtime, defaultRuntime)
+	}
+}
+
+func mustMsgPack(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	var data []byte
+	if err := base.MsgPackEncode(&data, v); err != nil {
+		t.Fatalf("MsgPackEncode: %v", err)
+	}
+	return data
+}
+
+func TestImageGCTickerInterval(t *testing.T) {
+	d := testDriver()
+	// Inject a short ticker interval for testing.
+	d.gcTickerInterval = 10 * time.Millisecond
+
+	rec := newRecorder()
+	rec.garbageCollectCount = 0
+	d.ctr = rec
+	d.sandboxMgr = NewSandboxManager(rec, d.logger)
+	d.config = &PluginConfig{GCImage: true}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go d.imageGC(ctx, 3*time.Minute)
+
+	// Wait for one GC cycle to fire.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	rec.mu.Lock()
+	count := rec.garbageCollectCount
+	rec.mu.Unlock()
+
+	if count < 1 {
+		t.Errorf("expected at least 1 GarbageCollect call, got %d", count)
 	}
 }

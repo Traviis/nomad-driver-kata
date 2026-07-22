@@ -29,6 +29,7 @@ type recorder struct {
 	imageConfig ocispec.ImageConfig
 
 	createContainerErrFor map[string]error
+	garbageCollectCount   int
 }
 
 func newRecorder() *recorder {
@@ -204,5 +205,8 @@ func (r *recorder) Cleanup(ctx context.Context, id string) {
 
 func (r *recorder) GarbageCollect(ctx context.Context, delay time.Duration) (int, error) {
 	r.record("GarbageCollect", delay)
+	r.mu.Lock()
+	r.garbageCollectCount++
+	r.mu.Unlock()
 	return 0, nil
 }

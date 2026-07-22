@@ -30,14 +30,12 @@ Close test gaps in nomad-driver-kata. Primary goal: run the real integration tes
       and record per-function 0% list in Notes
 - [B] Integration test attempt: try `sudo -n nix run .#integration-test`. If root is
       unavailable, record exact failure in Notes, mark [B], and continue
-- [ ] Integration test attempt: try `sudo -n nix run .#integration-test`. If root is
-      unavailable, record exact failure in Notes, mark [B], and continue
-- [ ] Unit: Driver.SetConfig — decode plugin config, error paths (bad config, containerd
-      connect failure) using the existing fake/recorder containerd client from *_test.go
-- [ ] Unit: Driver.ConfigSchema, TaskConfigSchema, TaskEvents — trivial but 0%
-- [ ] Fix: parseMetricProto nil-input panic — failing test first, then guard
-- [ ] Unit: imageGC — needs ticker/interval injection; make the SMALLEST refactor that
-      lets a test drive one GC cycle with the fake client (no behavior change)
+- [ ] Unit: Driver.SetConfig — decode plugin config, error paths (bad config, invalid
+      duration, bad consul_grpc_addr) using the existing fake/recorder client
+- [x] Unit: Driver.ConfigSchema, TaskConfigSchema, TaskEvents — trivial but 0%
+- [x] Fix: parseMetricProto nil-input panic — failing test first, then guard
+- [ ] Unit: imageGC — needs ticker/interval injection; smallest refactor to let
+      a test drive one GC cycle with the fake client (no behavior change)
 - [ ] Unit: nsCtx and any pure helpers in containerd.go reachable without a live daemon
 - [ ] Unit: CreateContainer OCI spec assembly — only if the spec-building can be tested
       via the existing interface/fakes WITHOUT restructuring containerd.go; otherwise
@@ -71,3 +69,14 @@ Close test gaps in nomad-driver-kata. Primary goal: run the real integration tes
 - Integration test blocked: no root access. sudo fails with "no new privileges" flag.
   /dev/kvm exists (0666) but root is required for integration test.
 - Recorder already implements the full Containerd interface — good foundation for unit tests.
+
+### Iteration 2 (2026-07-22)
+
+- Fixed: parseMetricProto nil-input panic — added `if metric == nil` guard at stats.go:35
+- Added: TestParseMetricProtoNilData (was skipped, now passes)
+- Added: TestConfigSchema, TestTaskConfigSchema, TestTaskEvents (all trivially 100%)
+- Coverage: 54.9% → 55.3%
+- Remaining 0% functions:
+  - containerd.go: all 21 methods (require live containerd; recorder covers logic paths via driver tests)
+  - driver.go: SetConfig, imageGC
+- Next targets: SetConfig error paths, imageGC refactor for testability

@@ -46,16 +46,17 @@ var (
 )
 
 type Driver struct {
-	logger           hclog.Logger
-	eventer          *eventer.Eventer
-	config           *PluginConfig
-	ctr              Containerd
-	sandboxMgr       *SandboxManager
-	tasks            *taskStore
-	ctx              context.Context
-	cancel           context.CancelFunc
-	stateDir         string
-	imagePullTimeout time.Duration
+	logger              hclog.Logger
+	eventer             *eventer.Eventer
+	config              *PluginConfig
+	ctr                 Containerd
+	sandboxMgr          *SandboxManager
+	tasks               *taskStore
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	stateDir            string
+	imagePullTimeout    time.Duration
+	gcTickerInterval    time.Duration
 }
 
 type taskStore struct {
@@ -170,7 +171,11 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 }
 
 func (d *Driver) imageGC(ctx context.Context, delay time.Duration) {
-	ticker := time.NewTicker(5 * time.Minute)
+	interval := d.gcTickerInterval
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
