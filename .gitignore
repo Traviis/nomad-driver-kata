@@ -2,3 +2,4 @@
 /nomad-driver-kata
 *.test
 vendor/
+.pi-subagents/

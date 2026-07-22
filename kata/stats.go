@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/containerd/containerd/api/types"
 	v2 "github.com/containerd/cgroups/v3/cgroup2/stats"
+	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/typeurl/v2"
 	"github.com/hashicorp/nomad/plugins/drivers"
 )

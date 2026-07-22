@@ -46,17 +46,17 @@ var (
 )
 
 type Driver struct {
-	logger              hclog.Logger
-	eventer             *eventer.Eventer
-	config              *PluginConfig
-	ctr                 Containerd
-	sandboxMgr          *SandboxManager
-	tasks               *taskStore
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	stateDir            string
-	imagePullTimeout    time.Duration
-	gcTickerInterval    time.Duration
+	logger           hclog.Logger
+	eventer          *eventer.Eventer
+	config           *PluginConfig
+	ctr              Containerd
+	sandboxMgr       *SandboxManager
+	tasks            *taskStore
+	ctx              context.Context
+	cancel           context.CancelFunc
+	stateDir         string
+	imagePullTimeout time.Duration
+	gcTickerInterval time.Duration
 }
 
 type taskStore struct {

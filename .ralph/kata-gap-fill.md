@@ -53,7 +53,7 @@ Close test gaps in nomad-driver-kata. Primary goal: run the real integration tes
 - `nix develop --command go test ./kata/ -coverprofile=/tmp/kata-cov.out` → ok 0.252s coverage: 54.9%
 - `sudo -n nix run .#integration-test` → FAIL: "The no new privileges flag is set, which prevents sudo from running as root." [BLOCKED]
 - Iteration 3: `go test ./kata/ -coverprofile=/tmp/kata-cov-iter3.out` → ok 1.004s coverage: 60.3%
-- Final: `nix develop --command go test ./... -cover` → ok, see Notes
+- Final: `nix develop --command go test ./... -cover` → ok 1.003s coverage: 60.3%
 
 ## Final Verification
 
