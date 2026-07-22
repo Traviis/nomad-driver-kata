@@ -3,3 +3,4 @@
 *.test
 vendor/
 .pi-subagents/
+.ralph/*
