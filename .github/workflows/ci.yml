@@ -19,8 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v30
-      - run: |
-          sudo "$(which nix)" run \
+      - name: Run VM integration test when nested KVM is available
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "No /dev/kvm on this runner — skipping VM integration test."
+            exit 0
+          fi
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            echo "/dev/kvm present but not accessible — skipping VM integration test."
+            exit 0
+          fi
+          if ! cat /sys/module/kvm_amd/parameters/nested \
+                   /sys/module/kvm_intel/parameters/nested 2>/dev/null \
+               | grep -qi '^[Y1]'; then
+            echo "Nested KVM not enabled — skipping VM integration test."
+            exit 0
+          fi
+          echo "/dev/kvm available and nested KVM enabled — running VM integration test."
+          nix build -L \
             --extra-experimental-features "nix-command flakes" \
             --accept-flake-config \
-            .#integration-test
+            .#integration-vm
