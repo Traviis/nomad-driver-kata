@@ -128,7 +128,7 @@ pkgs.writeShellScript "kata-verify" ''
   # Exec into container
   echo ""
   echo "=== Exec verification ==="
-  EXEC_HOSTNAME=$(nomad alloc exec -task hello "$ALLOC_ID" hostname 2>/dev/null || echo "")
+  EXEC_HOSTNAME=$(nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/hostname 2>/dev/null || echo "")
   echo "Hostname from exec: $EXEC_HOSTNAME"
   if [ "$EXEC_HOSTNAME" = "test" ]; then
     echo "[OK] sandbox hostname inherited (group name 'test')"
@@ -137,7 +137,7 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
-  EXEC_HOSTS=$(nomad alloc exec -task hello "$ALLOC_ID" cat /etc/hosts 2>/dev/null || echo "")
+  EXEC_HOSTS=$(nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/cat /etc/hosts 2>/dev/null || echo "")
   echo "Hosts file:"
   echo "$EXEC_HOSTS"
   if echo "$EXEC_HOSTS" | grep -q "mydb" && echo "$EXEC_HOSTS" | grep -q "cache"; then
@@ -167,7 +167,7 @@ pkgs.writeShellScript "kata-verify" ''
   # Verify VM sharing via hostname — both tasks should see the sandbox hostname
   echo ""
   echo "=== VM sharing verification ==="
-  SIDECAR_HOSTNAME=$(nomad alloc exec -task sidecar "$ALLOC_ID" hostname 2>/dev/null || echo "")
+  SIDECAR_HOSTNAME=$(nomad alloc exec -i=false -t=false -task sidecar "$ALLOC_ID" /bin/hostname 2>/dev/null || echo "")
   echo "hello hostname:   $EXEC_HOSTNAME"
   echo "sidecar hostname: $SIDECAR_HOSTNAME"
   if [ "$EXEC_HOSTNAME" = "$SIDECAR_HOSTNAME" ]; then
@@ -225,8 +225,8 @@ pkgs.writeShellScript "kata-verify" ''
   # VM isolation: different groups = different VMs
   echo ""
   echo "=== VM isolation ==="
-  SERVER_HOSTNAME=$(nomad alloc exec -task web "$SERVER_ALLOC" hostname 2>/dev/null || echo "")
-  CLIENT_HOSTNAME=$(nomad alloc exec -task fetcher "$CLIENT_ALLOC" hostname 2>/dev/null || echo "")
+  SERVER_HOSTNAME=$(nomad alloc exec -i=false -t=false -task web "$SERVER_ALLOC" /bin/hostname 2>/dev/null || echo "")
+  CLIENT_HOSTNAME=$(nomad alloc exec -i=false -t=false -task fetcher "$CLIENT_ALLOC" /bin/hostname 2>/dev/null || echo "")
   echo "server VM: $SERVER_HOSTNAME"
   echo "client VM: $CLIENT_HOSTNAME"
   if [ -n "$SERVER_HOSTNAME" ] && [ -n "$CLIENT_HOSTNAME" ] && [ "$SERVER_HOSTNAME" != "$CLIENT_HOSTNAME" ]; then
@@ -239,8 +239,8 @@ pkgs.writeShellScript "kata-verify" ''
   # VM sharing: tasks within group share VM
   echo ""
   echo "=== Intra-group VM sharing ==="
-  WEB_SIDECAR_HOSTNAME=$(nomad alloc exec -task web-sidecar "$SERVER_ALLOC" hostname 2>/dev/null || echo "")
-  FETCHER_SIDECAR_HOSTNAME=$(nomad alloc exec -task fetcher-sidecar "$CLIENT_ALLOC" hostname 2>/dev/null || echo "")
+  WEB_SIDECAR_HOSTNAME=$(nomad alloc exec -i=false -t=false -task web-sidecar "$SERVER_ALLOC" /bin/hostname 2>/dev/null || echo "")
+  FETCHER_SIDECAR_HOSTNAME=$(nomad alloc exec -i=false -t=false -task fetcher-sidecar "$CLIENT_ALLOC" /bin/hostname 2>/dev/null || echo "")
   echo "web + web-sidecar:         $SERVER_HOSTNAME / $WEB_SIDECAR_HOSTNAME"
   echo "fetcher + fetcher-sidecar: $CLIENT_HOSTNAME / $FETCHER_SIDECAR_HOSTNAME"
   if [ "$SERVER_HOSTNAME" = "$WEB_SIDECAR_HOSTNAME" ] && [ "$CLIENT_HOSTNAME" = "$FETCHER_SIDECAR_HOSTNAME" ]; then
@@ -253,7 +253,7 @@ pkgs.writeShellScript "kata-verify" ''
   # Cross-VM networking
   echo ""
   echo "=== Cross-VM networking ==="
-  SERVER_IP=$(nomad alloc exec -task web "$SERVER_ALLOC" ip addr 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*scope global.*/\1/p') || true
+  SERVER_IP=$(nomad alloc exec -i=false -t=false -task web "$SERVER_ALLOC" /bin/ip addr 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*scope global.*/\1/p') || true
   echo "Server bridge IP: $SERVER_IP"
 
   if [ -z "$SERVER_IP" ] || [ "$SERVER_IP" = "null" ]; then
@@ -264,7 +264,7 @@ pkgs.writeShellScript "kata-verify" ''
 
   RESPONSE=""
   for i in $(seq 1 15); do
-    RESPONSE=$(nomad alloc exec -task fetcher "$CLIENT_ALLOC" wget -q -O - "http://$SERVER_IP:8080/" 2>/dev/null || echo "")
+    RESPONSE=$(nomad alloc exec -i=false -t=false -task fetcher "$CLIENT_ALLOC" /bin/wget -q -O - "http://$SERVER_IP:8080/" 2>/dev/null || echo "")
     if echo "$RESPONSE" | grep -q "SERVER_OK"; then break; fi
     sleep 2
   done
@@ -275,10 +275,10 @@ pkgs.writeShellScript "kata-verify" ''
     echo "[FAIL] could not reach server from client VM"
     echo "--- diagnostics ---"
     echo "Server network:"
-    nomad alloc exec -task web "$SERVER_ALLOC" ip addr 2>/dev/null || true
+    nomad alloc exec -i=false -t=false -task web "$SERVER_ALLOC" /bin/ip addr 2>/dev/null || true
     echo "Client network:"
-    nomad alloc exec -task fetcher "$CLIENT_ALLOC" ip addr 2>/dev/null || true
-    nomad alloc exec -task fetcher "$CLIENT_ALLOC" ip route 2>/dev/null || true
+    nomad alloc exec -i=false -t=false -task fetcher "$CLIENT_ALLOC" /bin/ip addr 2>/dev/null || true
+    nomad alloc exec -i=false -t=false -task fetcher "$CLIENT_ALLOC" /bin/ip route 2>/dev/null || true
     exit 1
   fi
 
