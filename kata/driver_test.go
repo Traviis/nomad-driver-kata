@@ -1213,6 +1213,94 @@ func TestExecTask(t *testing.T) {
 	}
 }
 
+func TestExecTaskStreaming(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	result, err := d.ExecTaskStreaming(context.Background(), cfg.ID, &drivers.ExecOptions{
+		Command: []string{"echo", "hello"},
+		Tty:     false,
+	})
+	if err != nil {
+		t.Fatalf("ExecTaskStreaming: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil exit result")
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
+	}
+
+	rec.mu.Lock()
+	var found bool
+	var recordedCmd []string
+	for _, c := range rec.calls {
+		if c.Method == "ExecStreaming" {
+			found = true
+			if len(c.Args) >= 3 {
+				recordedCmd, _ = c.Args[2].([]string)
+			}
+		}
+	}
+	rec.mu.Unlock()
+
+	if !found {
+		t.Error("expected ExecStreaming call")
+	}
+	if !slices.Equal(recordedCmd, []string{"echo", "hello"}) {
+		t.Errorf("ExecStreaming command = %v, want [echo hello]", recordedCmd)
+	}
+}
+
+func TestExecTaskStreamingNotFound(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+
+	_, err := d.ExecTaskStreaming(context.Background(), "nonexistent", &drivers.ExecOptions{
+		Command: []string{"echo", "hello"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown task")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found', got: %v", err)
+	}
+}
+
+func TestExecTaskStreamingTty(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	_, err := d.ExecTaskStreaming(context.Background(), cfg.ID, &drivers.ExecOptions{
+		Command: []string{"echo", "hello"},
+		Tty:     true,
+	})
+	if err != nil {
+		t.Fatalf("ExecTaskStreaming: %v", err)
+	}
+
+	rec.mu.Lock()
+	var tty bool
+	for _, c := range rec.calls {
+		if c.Method == "ExecStreaming" && len(c.Args) >= 4 {
+			tty, _ = c.Args[3].(bool)
+		}
+	}
+	rec.mu.Unlock()
+
+	if !tty {
+		t.Error("expected Tty=true to be passed through")
+	}
+}
+
 func TestRecoverTask(t *testing.T) {
 	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
