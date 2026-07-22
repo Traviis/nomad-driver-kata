@@ -32,6 +32,9 @@ type containerMetrics struct {
 }
 
 func parseMetricProto(metric *types.Metric) (*containerMetrics, error) {
+	if metric == nil {
+		return nil, fmt.Errorf("nil metric")
+	}
 	data, err := typeurl.UnmarshalAny(metric.Data)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshaling metrics: %w", err)

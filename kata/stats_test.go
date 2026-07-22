@@ -209,7 +209,16 @@ func TestParseMetricProtoMemoryOnly(t *testing.T) {
 // stats.go:35 — typeurl.UnmarshalAny(metric.Data) before nil check on metric).
 // This is a production bug. Test skipped until fixed.
 func TestParseMetricProtoNilData(t *testing.T) {
-	t.Skip("parseMetricProto(nil) panics — needs nil guard at stats.go:35")
+	result, err := parseMetricProto(nil)
+	if err == nil {
+		t.Fatal("expected error for nil input")
+	}
+	if result != nil {
+		t.Error("expected nil result for nil input")
+	}
+	if !strings.Contains(err.Error(), "nil") {
+		t.Errorf("error should mention 'nil', got: %v", err)
+	}
 }
 
 func TestParseMetricProtoUnsupportedType(t *testing.T) {

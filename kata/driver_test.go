@@ -2129,3 +2129,67 @@ func TestStartTaskEntrypoint(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigSchema(t *testing.T) {
+	d := testDriver()
+	schema, err := d.ConfigSchema()
+	if err != nil {
+		t.Fatalf("ConfigSchema: %v", err)
+	}
+	if schema == nil {
+		t.Fatal("expected non-nil schema")
+	}
+}
+
+func TestTaskConfigSchema(t *testing.T) {
+	d := testDriver()
+	schema, err := d.TaskConfigSchema()
+	if err != nil {
+		t.Fatalf("TaskConfigSchema: %v", err)
+	}
+	if schema == nil {
+		t.Fatal("expected non-nil schema")
+	}
+}
+
+func TestTaskEvents(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := d.TaskEvents(ctx)
+	if err != nil {
+		t.Fatalf("TaskEvents: %v", err)
+	}
+	if ch == nil {
+		t.Fatal("expected non-nil channel")
+	}
+
+	// Eventer returns a channel. It may emit events on task lifecycle
+	// transitions. We verify the API contract by reading with a short timeout
+	// (may be empty if no events have been emitted yet).
+	select {
+	case evt := <-ch:
+		_ = evt // event received
+	case <-time.After(500 * time.Millisecond):
+		// No event — acceptable; eventer emits on task lifecycle transitions
+	}
+
+	cancel()
+
+	// Give the eventer goroutine time to notice cancellation.
+	time.Sleep(200 * time.Millisecond)
+
+	// Drain remaining events (if any) without blocking.
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return // channel closed
+			}
+		default:
+			return // no more events available
+		}
+	}
+}
