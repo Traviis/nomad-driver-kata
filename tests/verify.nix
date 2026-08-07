@@ -177,6 +177,40 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
+  # Kill the main container outside Nomad and verify Nomad restarts it in the
+  # same allocation. This exercises the real task-exit and StartTask path.
+  echo ""
+  echo "=== Container restart verification ==="
+  RESTARTS_BEFORE=$(nomad alloc status -json "$ALLOC_ID" | jq -r '.TaskStates.hello.Restarts')
+  ctr -a "$CONTAINERD_SOCK" task kill "kata-$ALLOC_ID-hello"
+
+  RESTARTED=false
+  for i in $(seq 1 30); do
+    HELLO_STATE=$(nomad alloc status -json "$ALLOC_ID" | jq -r '.TaskStates.hello.State')
+    RESTARTS_AFTER=$(nomad alloc status -json "$ALLOC_ID" | jq -r '.TaskStates.hello.Restarts')
+    if [ "$HELLO_STATE" = "running" ] && [ "$RESTARTS_AFTER" -gt "$RESTARTS_BEFORE" ]; then
+      RESTARTED=true
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "$RESTARTED" != "true" ]; then
+    echo "[FAIL] hello container was not restarted"
+    nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+    log_tail 100
+    exit 1
+  fi
+
+  RESTART_EXEC=$(nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/echo RESTART_OK 2>/dev/null || echo "")
+  if [ "$RESTART_EXEC" = "RESTART_OK" ]; then
+    echo "[OK] hello container restarted and accepts exec"
+  else
+    echo "[FAIL] restarted hello container did not accept exec"
+    nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+    exit 1
+  fi
+
   # Stop Phase 1 job to free resources for Phase 2
   echo ""
   echo "========================================="

@@ -9,6 +9,13 @@
       datacenters = ["dc1"]
 
       group "test" {
+        restart {
+          attempts = 2
+          delay    = "1s"
+          interval = "10m"
+          mode     = "delay"
+        }
+
         task "hello" {
           driver = "kata"
 
