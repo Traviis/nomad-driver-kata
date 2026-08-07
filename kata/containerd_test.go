@@ -1,12 +1,35 @@
 package kata
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/pkg/oci"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
+
+func TestWithNewPrivileges(t *testing.T) {
+	spec := &oci.Spec{}
+	if err := withNewPrivileges(context.Background(), nil, &containers.Container{}, spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Process != nil {
+		t.Fatal("withNewPrivileges should tolerate being applied before process initialization")
+	}
+
+	spec.Process = &specs.Process{NoNewPrivileges: true}
+	if err := withNewPrivileges(context.Background(), nil, &containers.Container{}, spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Process.NoNewPrivileges {
+		t.Fatal("normal Kata tasks must permit setuid programs such as sudo")
+	}
+}
 
 func TestDockerCredentialFuncAuthsBasic(t *testing.T) {
 	dir := t.TempDir()

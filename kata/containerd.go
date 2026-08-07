@@ -1,12 +1,12 @@
 package kata
 
 import (
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"io"
 	"os"
 	"os/exec"
@@ -232,6 +232,7 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 
 	specOpts := []oci.SpecOpts{
 		oci.WithImageConfig(image),
+		withNewPrivileges,
 	}
 
 	if len(cfg.Command) > 0 {
@@ -334,6 +335,13 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 
 	_, err = c.client.NewContainer(ctx, cfg.ID, containerOpts...)
 	return err
+}
+
+func withNewPrivileges(_ context.Context, _ oci.Client, _ *containers.Container, spec *oci.Spec) error {
+	if spec.Process != nil {
+		spec.Process.NoNewPrivileges = false
+	}
+	return nil
 }
 
 func (c *containerdClient) DeleteContainer(ctx context.Context, id string) error {
