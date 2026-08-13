@@ -1461,6 +1461,21 @@ func TestTaskStats(t *testing.T) {
 	}
 }
 
+func TestTaskStatsRejectsNonPositiveInterval(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	for _, interval := range []time.Duration{0, -time.Millisecond} {
+		if _, err := d.TaskStats(context.Background(), cfg.ID, interval); err == nil {
+			t.Errorf("TaskStats interval %s: expected error", interval)
+		}
+	}
+}
+
 func TestTaskStatsContextCancellation(t *testing.T) {
 	d, _ := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})

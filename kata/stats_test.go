@@ -138,8 +138,8 @@ func TestParseMetricProtoValidCgroupV2(t *testing.T) {
 	if result.MemoryUsageBytes != 1024*1024 {
 		t.Errorf("MemoryUsageBytes = %d, want %d", result.MemoryUsageBytes, 1024*1024)
 	}
-	if result.MemoryMaxUsageBytes != 4*1024*1024 {
-		t.Errorf("MemoryMaxUsageBytes = %d, want %d", result.MemoryMaxUsageBytes, 4*1024*1024)
+	if result.MemoryMaxUsageBytes != 0 {
+		t.Errorf("MemoryMaxUsageBytes = %d, want 0 when cgroup v2 does not report peak usage", result.MemoryMaxUsageBytes)
 	}
 	if result.MemorySwapBytes != 512*1024 {
 		t.Errorf("MemorySwapBytes = %d, want %d", result.MemorySwapBytes, 512*1024)
@@ -205,9 +205,6 @@ func TestParseMetricProtoMemoryOnly(t *testing.T) {
 	}
 }
 
-// NOTE: parseMetricProto(nil) currently panics (nil pointer dereference at
-// stats.go:35 — typeurl.UnmarshalAny(metric.Data) before nil check on metric).
-// This is a production bug. Test skipped until fixed.
 func TestParseMetricProtoNilData(t *testing.T) {
 	result, err := parseMetricProto(nil)
 	if err == nil {

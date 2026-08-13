@@ -53,7 +53,6 @@ func parseMetricProto(metric *types.Metric) (*containerMetrics, error) {
 		}
 		if stats.Memory != nil {
 			m.MemoryUsageBytes = stats.Memory.Usage
-			m.MemoryMaxUsageBytes = stats.Memory.UsageLimit
 			m.MemorySwapBytes = stats.Memory.SwapUsage
 			m.MemoryRSSBytes = stats.Memory.Anon
 			m.MemoryCacheBytes = stats.Memory.File

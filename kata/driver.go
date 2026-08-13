@@ -570,6 +570,10 @@ func (d *Driver) InspectTask(taskID string) (*drivers.TaskStatus, error) {
 }
 
 func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Duration) (<-chan *drivers.TaskResourceUsage, error) {
+	if interval <= 0 {
+		return nil, fmt.Errorf("stats interval must be positive")
+	}
+
 	h, ok := d.tasks.Get(taskID)
 	if !ok {
 		return nil, fmt.Errorf("task %s not found", taskID)
@@ -593,7 +597,11 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 				}
 				usage := metrics.ResourceUsage(previous)
 				previous = metrics
-				ch <- usage
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- usage:
+				}
 			}
 		}
 	}()
