@@ -26,6 +26,7 @@ type recorder struct {
 	runExit               int
 	runErr                error
 	runCh                 chan struct{}
+	stopSandboxOnRunExit  bool
 	stopSandboxOnRunError bool
 	taskStateErrFor       map[string]error
 	configs               []*ContainerConfig
@@ -154,7 +155,7 @@ func (r *recorder) RunTask(ctx context.Context, id string, stdout, stderr *os.Fi
 	if r.runCh != nil {
 		<-r.runCh
 	}
-	if r.runErr != nil && r.stopSandboxOnRunError {
+	if (r.runExit != 0 && r.stopSandboxOnRunExit) || (r.runErr != nil && r.stopSandboxOnRunError) {
 		r.mu.Lock()
 		for taskID := range r.running {
 			if strings.HasSuffix(taskID, "-sandbox") {

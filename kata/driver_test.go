@@ -727,6 +727,40 @@ func TestTaskExitMarksAllocationDeadWhenSandboxStops(t *testing.T) {
 	}
 }
 
+func TestTaskExitWithoutErrorMarksAllocationDeadWhenSandboxStops(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	rec.runExit = 255
+	rec.stopSandboxOnRunExit = true
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for !d.sandboxDead(cfg.AllocID) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !d.sandboxDead(cfg.AllocID) {
+		t.Fatal("abnormal exit without monitor error did not poison dead sandbox")
+	}
+}
+
+func TestAbnormalTaskExitDoesNotMarkAllocationDeadWhenSandboxRuns(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	rec.runExit = 255
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if d.sandboxDead(cfg.AllocID) {
+		t.Fatal("abnormal task exit poisoned healthy sandbox")
+	}
+}
+
 func TestTaskExitDoesNotMarkAllocationDeadWhenSandboxStateIsUnknown(t *testing.T) {
 	d, rec := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})

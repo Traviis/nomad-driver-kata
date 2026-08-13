@@ -74,7 +74,7 @@ func (h *taskHandle) monitorRecovered(stdoutPath, stderrPath string) {
 }
 
 func (h *taskHandle) recordExit(code int, err error) {
-	if err != nil && h.onSandboxDead != nil {
+	if (code != 0 || err != nil) && h.onSandboxDead != nil {
 		running, stateErr := h.ctr.TaskState(context.Background(), h.sandboxID)
 		if !running && (stateErr == nil || sandboxTransportFailed(stateErr)) {
 			h.onSandboxDead(h.allocID)
