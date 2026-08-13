@@ -6,6 +6,51 @@ All tasks within a Nomad task group share a single Kata VM, giving you
 multi-container-per-VM isolation identical to how Kubernetes pods work
 with Kata — but on Nomad.
 
+## Critical failure semantics
+
+> [!WARNING]
+> **Normal single-task restarts are supported.** If one task exits or Nomad
+> restarts it while the shared Kata VM, shim, and agent remain healthy, the
+> driver recreates only that task inside the existing VM. Sibling tasks keep
+> running.
+>
+> The failure boundary differs from Nomad's standard Docker driver when the
+> **shared sandbox** fails. Every Kata task in an allocation shares one VM and
+> one Kata shim. If the VM dies, the shim dies, or the Kata runtime control
+> plane becomes irrecoverably unavailable, all tasks in the allocation lose
+> their runtime together. QEMU may still be running after shim death; that VM
+> is nevertheless operationally unrecoverable.
+>
+> The driver treats confirmed shared-sandbox death as an allocation-terminal
+> failure.
+> It records the allocation as poisoned, rejects every later `StartTask` call
+> for that allocation with an unrecoverable error, cleans exact orphaned QEMU
+> and `virtiofsd` processes, and lets Nomad create a replacement allocation.
+> It will not recreate a VM under the same allocation ID.
+
+In short:
+
+```text
+One task exits + shared sandbox healthy     → restart that task
+Shared VM/shim/control plane becomes dead   → replace the allocation
+```
+
+Sandbox death is different from an ordinary task exit: Kata may leave live
+QEMU, `virtiofsd`, QMP sockets, network qdiscs, and other runtime state after
+abrupt shim failure.
+Starting another sandbox with the same ID can fail on stale resources or create
+a runtime state that disagrees with Nomad and containerd.
+
+Allocation replacement is not live recovery. Running processes, VM memory,
+container connections, and unflushed state are lost. Allocation-local files
+must also be treated as disposable unless the surrounding Nomad storage design
+explicitly preserves them across replacement. Jobs using this driver must have
+a reschedule policy that permits a replacement allocation.
+
+By contrast, Nomad's Docker driver normally isolates task runtime failures to an
+individual container. Do not assume Docker-driver restart behavior when moving
+a multi-task group to this driver.
+
 ## How it works
 
 When the first task in an allocation starts, the driver creates a pause

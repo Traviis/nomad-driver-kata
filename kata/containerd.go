@@ -48,7 +48,7 @@ type Containerd interface {
 
 	KillTask(ctx context.Context, id string, signal string) error
 	DeleteTask(ctx context.Context, id string) error
-	TaskRunning(ctx context.Context, id string) bool
+	TaskState(ctx context.Context, id string) (bool, error)
 
 	Exec(ctx context.Context, id, execID string, cmd []string) (string, int, error)
 	ExecStreaming(ctx context.Context, id, execID string, cmd []string, tty bool, stdin io.Reader, stdout, stderr io.Writer) (int, error)
@@ -469,23 +469,29 @@ func (c *containerdClient) DeleteTask(ctx context.Context, id string) error {
 	return err
 }
 
-func (c *containerdClient) TaskRunning(ctx context.Context, id string) bool {
+func (c *containerdClient) TaskState(ctx context.Context, id string) (bool, error) {
 	ctx = c.nsCtx(ctx)
 	container, err := c.client.LoadContainer(ctx, id)
 	if err != nil {
-		return false
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
 	}
 
 	task, err := container.Task(ctx, nil)
 	if err != nil {
-		return false
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
 	}
 
 	status, err := task.Status(ctx)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return status.Status == containerd.Running
+	return status.Status == containerd.Running, nil
 }
 
 func (c *containerdClient) Exec(ctx context.Context, id, execID string, cmd []string) (string, int, error) {

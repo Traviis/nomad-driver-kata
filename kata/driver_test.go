@@ -3,6 +3,7 @@ package kata
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -662,6 +663,99 @@ func testTaskConfig(t *testing.T, taskCfg *TaskConfig) *drivers.TaskConfig {
 		t.Fatalf("encoding driver config: %v", err)
 	}
 	return cfg
+}
+
+func TestStartTaskRejectsPoisonedAllocation(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	if err := d.markSandboxDead(cfg.AllocID); err != nil {
+		t.Fatalf("markSandboxDead: %v", err)
+	}
+
+	_, _, err := d.StartTask(cfg)
+	if err == nil {
+		t.Fatal("expected poisoned allocation to be rejected")
+	}
+	if !strings.Contains(err.Error(), "allocation replacement required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.called("CreateContainer") {
+		t.Error("poisoned allocation attempted container creation")
+	}
+}
+
+func TestPoisonedAllocationSurvivesDriverRestart(t *testing.T) {
+	d, _ := testDriverWithRecorder(t)
+	allocID := "alloc-1"
+	if err := d.markSandboxDead(allocID); err != nil {
+		t.Fatalf("markSandboxDead: %v", err)
+	}
+
+	restarted, rec := testDriverWithRecorder(t)
+	restarted.stateDir = d.stateDir
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+
+	_, _, err := restarted.StartTask(cfg)
+	if err == nil || !strings.Contains(err.Error(), "allocation replacement required") {
+		t.Fatalf("expected persisted poison marker, got %v", err)
+	}
+	if rec.called("CreateContainer") {
+		t.Error("restarted driver attempted container creation for poisoned allocation")
+	}
+}
+
+func TestTaskExitMarksAllocationDeadWhenSandboxStops(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	rec.runErr = errors.New("ttrpc: closed")
+	rec.taskStateErrFor = map[string]error{sandboxID(cfg.AllocID): errors.New("ttrpc: closed")}
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for !d.sandboxDead(cfg.AllocID) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !d.sandboxDead(cfg.AllocID) {
+		t.Fatal("sandbox death did not poison allocation")
+	}
+	if !rec.called("Cleanup") || !rec.called("DeleteSandboxMetadata") {
+		t.Error("sandbox death did not request stale sandbox cleanup")
+	}
+}
+
+func TestTaskExitDoesNotMarkAllocationDeadWhenSandboxStateIsUnknown(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	rec.runErr = errors.New("ttrpc: closed")
+	rec.taskStateErrFor = map[string]error{sandboxID(cfg.AllocID): errors.New("containerd unavailable")}
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if d.sandboxDead(cfg.AllocID) {
+		t.Fatal("unknown sandbox state poisoned allocation")
+	}
+}
+
+func TestOrdinaryTaskExitDoesNotMarkAllocationDead(t *testing.T) {
+	d, rec := testDriverWithRecorder(t)
+	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
+	rec.runExit = 1
+
+	if _, _, err := d.StartTask(cfg); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if d.sandboxDead(cfg.AllocID) {
+		t.Fatal("ordinary task exit poisoned allocation")
+	}
 }
 
 func TestStartTask(t *testing.T) {

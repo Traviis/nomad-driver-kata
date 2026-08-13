@@ -253,9 +253,40 @@ func (d *Driver) taskConfigDir(allocID, taskName string) string {
 	return filepath.Join(d.stateDir, allocID, taskName)
 }
 
+func (d *Driver) sandboxDeadPath(allocID string) string {
+	return filepath.Join(d.stateDir, allocID, "sandbox-dead")
+}
+
+func (d *Driver) sandboxDead(allocID string) bool {
+	_, err := os.Stat(d.sandboxDeadPath(allocID))
+	return err == nil
+}
+
+func (d *Driver) markSandboxDead(allocID string) error {
+	path := d.sandboxDeadPath(allocID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("creating allocation state directory: %w", err)
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		return fmt.Errorf("recording dead sandbox: %w", err)
+	}
+
+	d.logger.Error("shared Kata sandbox died; allocation replacement required", "alloc_id", allocID)
+	sandboxID := sandboxID(allocID)
+	d.ctr.Cleanup(context.Background(), sandboxID)
+	d.ctr.DeleteSandboxMetadata(context.Background(), sandboxID)
+	if err := cleanupSandboxProcesses("/proc", sandboxID); err != nil {
+		d.logger.Error("failed to clean orphaned Kata sandbox processes", "alloc_id", allocID, "sandbox_id", sandboxID, "error", err)
+	}
+	return nil
+}
+
 func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
 	if cfg.AllocID == "" {
 		return nil, nil, fmt.Errorf("alloc ID is required")
+	}
+	if d.sandboxDead(cfg.AllocID) {
+		return nil, nil, fmt.Errorf("shared Kata sandbox for allocation %s terminated; allocation replacement required", cfg.AllocID)
 	}
 
 	var taskCfg TaskConfig
@@ -416,14 +447,15 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	}
 
 	h := &taskHandle{
-		containerID: containerID,
-		sandboxID:   sandbox.ID,
-		allocID:     cfg.AllocID,
-		taskName:    cfg.Name,
-		ctr:         d.ctr,
-		logger:      d.logger.With("container_id", containerID),
-		startedAt:   time.Now(),
-		doneCh:      make(chan struct{}),
+		containerID:   containerID,
+		sandboxID:     sandbox.ID,
+		allocID:       cfg.AllocID,
+		taskName:      cfg.Name,
+		ctr:           d.ctr,
+		logger:        d.logger.With("container_id", containerID),
+		startedAt:     time.Now(),
+		doneCh:        make(chan struct{}),
+		onSandboxDead: func(allocID string) { _ = d.markSandboxDead(allocID) },
 	}
 
 	go h.run(cfg.StdoutPath, cfg.StderrPath)
@@ -461,21 +493,26 @@ func (d *Driver) RecoverTask(handle *drivers.TaskHandle) error {
 
 	d.logger.Info("recovering task", "container_id", state.ContainerID, "sandbox_id", state.SandboxID)
 
-	if !d.ctr.TaskRunning(context.Background(), state.ContainerID) {
+	running, err := d.ctr.TaskState(context.Background(), state.ContainerID)
+	if err != nil {
+		return fmt.Errorf("checking container %s: %w", state.ContainerID, err)
+	}
+	if !running {
 		return fmt.Errorf("container %s no longer running", state.ContainerID)
 	}
 
 	d.sandboxMgr.Recover(state.AllocID, state.SandboxID)
 
 	h := &taskHandle{
-		containerID: state.ContainerID,
-		sandboxID:   state.SandboxID,
-		allocID:     state.AllocID,
-		taskName:    state.TaskName,
-		ctr:         d.ctr,
-		logger:      d.logger.With("container_id", state.ContainerID),
-		startedAt:   time.Unix(0, state.StartedAt),
-		doneCh:      make(chan struct{}),
+		containerID:   state.ContainerID,
+		sandboxID:     state.SandboxID,
+		allocID:       state.AllocID,
+		taskName:      state.TaskName,
+		ctr:           d.ctr,
+		logger:        d.logger.With("container_id", state.ContainerID),
+		startedAt:     time.Unix(0, state.StartedAt),
+		doneCh:        make(chan struct{}),
+		onSandboxDead: func(allocID string) { _ = d.markSandboxDead(allocID) },
 	}
 
 	go h.monitorRecovered(handle.Config.StdoutPath, handle.Config.StderrPath)

@@ -3,6 +3,7 @@ package kata
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +24,9 @@ type taskHandle struct {
 	completedAt time.Time
 	exitResult  *drivers.ExitResult
 
-	doneCh chan struct{}
-	mu     sync.RWMutex
+	doneCh        chan struct{}
+	onSandboxDead func(string)
+	mu            sync.RWMutex
 }
 
 // run starts the containerd task with IO piped to log files.
@@ -46,7 +48,7 @@ func (h *taskHandle) run(stdoutPath, stderrPath string) {
 	}
 
 	exitCode, err := h.ctr.RunTask(context.Background(), h.containerID, stdout, stderr)
-	h.setExit(exitCode, err)
+	h.recordExit(exitCode, err)
 }
 
 // monitorRecovered re-attaches to a running task for log streaming after
@@ -68,7 +70,24 @@ func (h *taskHandle) monitorRecovered(stdoutPath, stderrPath string) {
 	}
 
 	exitCode, err := h.ctr.MonitorTask(context.Background(), h.containerID, stdout, stderr)
-	h.setExit(exitCode, err)
+	h.recordExit(exitCode, err)
+}
+
+func (h *taskHandle) recordExit(code int, err error) {
+	if err != nil && h.onSandboxDead != nil {
+		running, stateErr := h.ctr.TaskState(context.Background(), h.sandboxID)
+		if !running && (stateErr == nil || sandboxTransportFailed(stateErr)) {
+			h.onSandboxDead(h.allocID)
+		}
+	}
+	h.setExit(code, err)
+}
+
+func sandboxTransportFailed(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "ttrpc: closed") ||
+		strings.Contains(message, "transport is closing") ||
+		strings.Contains(message, "connection is shut down")
 }
 
 func (h *taskHandle) openLogs(stdoutPath, stderrPath string) (*os.File, *os.File, error) {

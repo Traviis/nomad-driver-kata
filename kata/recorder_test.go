@@ -5,6 +5,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,18 +16,20 @@ type call struct {
 }
 
 type recorder struct {
-	mu          sync.Mutex
-	calls       []call
-	version     string
-	versionErr  error
-	running     map[string]bool
-	metrics     *containerMetrics
-	metricsErr  error
-	runExit     int
-	runErr      error
-	runCh       chan struct{}
-	configs     []*ContainerConfig
-	imageConfig ocispec.ImageConfig
+	mu                    sync.Mutex
+	calls                 []call
+	version               string
+	versionErr            error
+	running               map[string]bool
+	metrics               *containerMetrics
+	metricsErr            error
+	runExit               int
+	runErr                error
+	runCh                 chan struct{}
+	stopSandboxOnRunError bool
+	taskStateErrFor       map[string]error
+	configs               []*ContainerConfig
+	imageConfig           ocispec.ImageConfig
 
 	createContainerErrFor map[string]error
 	garbageCollectCount   int
@@ -151,6 +154,15 @@ func (r *recorder) RunTask(ctx context.Context, id string, stdout, stderr *os.Fi
 	if r.runCh != nil {
 		<-r.runCh
 	}
+	if r.runErr != nil && r.stopSandboxOnRunError {
+		r.mu.Lock()
+		for taskID := range r.running {
+			if strings.HasSuffix(taskID, "-sandbox") {
+				delete(r.running, taskID)
+			}
+		}
+		r.mu.Unlock()
+	}
 	return r.runExit, r.runErr
 }
 
@@ -169,10 +181,13 @@ func (r *recorder) DeleteTask(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *recorder) TaskRunning(ctx context.Context, id string) bool {
+func (r *recorder) TaskState(ctx context.Context, id string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.running[id]
+	if err, ok := r.taskStateErrFor[id]; ok {
+		return false, err
+	}
+	return r.running[id], nil
 }
 
 func (r *recorder) Exec(ctx context.Context, id, execID string, cmd []string) (string, int, error) {
