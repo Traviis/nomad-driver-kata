@@ -18,11 +18,7 @@ pkgs.writeShellScript "kata-verify" ''
   set -euo pipefail
 
   export PATH="${
-    pkgs.lib.makeBinPath [
-      pkgs.nomad
-      pkgs.containerd
-      pkgs.jq
-    ]
+    pkgs.lib.makeBinPath [ pkgs.nomad pkgs.containerd pkgs.jq ]
   }:$PATH"
 
   : "''${NOMAD_ADDR:?NOMAD_ADDR must be set}"
@@ -334,6 +330,94 @@ pkgs.writeShellScript "kata-verify" ''
     nomad alloc exec -i=false -t=false -task fetcher "$CLIENT_ALLOC" /bin/ip route 2>/dev/null || true
     exit 1
   fi
+
+  echo ""
+  echo "=== Shared sandbox death cleanup and replacement ==="
+  FAILED_ALLOC="$SERVER_ALLOC"
+  FAILED_SANDBOX="kata-$FAILED_ALLOC-sandbox"
+  HEALTHY_ALLOC="$CLIENT_ALLOC"
+  HEALTHY_SANDBOX="kata-$HEALTHY_ALLOC-sandbox"
+
+  FAILED_QEMU_PID=$(pgrep -f "qemu-system.*sandbox-$FAILED_SANDBOX" | head -1)
+  FAILED_SHIM_PID=$(pgrep -f "containerd-shim-kata-v2.*-id $FAILED_SANDBOX" | head -1)
+  HEALTHY_QEMU_PID=$(pgrep -f "qemu-system.*sandbox-$HEALTHY_SANDBOX" | head -1)
+  HEALTHY_SHIM_PID=$(pgrep -f "containerd-shim-kata-v2.*-id $HEALTHY_SANDBOX" | head -1)
+
+  if [ -z "$FAILED_QEMU_PID" ] || [ -z "$FAILED_SHIM_PID" ] || [ -z "$HEALTHY_QEMU_PID" ] || [ -z "$HEALTHY_SHIM_PID" ]; then
+    echo "[FAIL] could not identify exact failed and healthy sandbox processes"
+    pgrep -af 'qemu-system|containerd-shim-kata-v2|virtiofsd' || true
+    exit 1
+  fi
+
+  # QEMU death leaves the shim alive long enough to exercise the driver's
+  # confirmed-death cleanup path. The exact sandbox shim must then be reaped.
+  kill -KILL "$FAILED_QEMU_PID"
+
+  POISONED=false
+  CLEANED=false
+  for i in $(seq 1 60); do
+    if [ -f "/tmp/kata-driver/$FAILED_ALLOC/sandbox-dead" ]; then
+      POISONED=true
+    fi
+    if ! kill -0 "$FAILED_SHIM_PID" 2>/dev/null \
+      && ! pgrep -f "sandbox-$FAILED_SANDBOX" >/dev/null \
+      && ! pgrep -f "virtiofsd.*$FAILED_ALLOC" >/dev/null; then
+      CLEANED=true
+    fi
+    if [ "$POISONED" = "true" ] && [ "$CLEANED" = "true" ]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$POISONED" != "true" ]; then
+    echo "[FAIL] failed allocation was not poisoned after sandbox death"
+    exit 1
+  fi
+  if [ "$CLEANED" != "true" ]; then
+    echo "[FAIL] exact dead sandbox processes were not cleaned"
+    pgrep -af "$FAILED_ALLOC" || true
+    exit 1
+  fi
+  echo "[OK] exact QEMU, virtiofsd, and Kata shim processes were cleaned"
+
+  if ! kill -0 "$HEALTHY_QEMU_PID" 2>/dev/null || ! kill -0 "$HEALTHY_SHIM_PID" 2>/dev/null; then
+    echo "[FAIL] unrelated Kata sandbox processes were killed"
+    exit 1
+  fi
+  HEALTHY_EXEC=$(nomad alloc exec -i=false -t=false -task fetcher "$HEALTHY_ALLOC" /bin/echo HEALTHY_SANDBOX_OK 2>/dev/null || echo "")
+  if [ "$HEALTHY_EXEC" != "HEALTHY_SANDBOX_OK" ]; then
+    echo "[FAIL] unrelated Kata allocation stopped accepting exec"
+    exit 1
+  fi
+  echo "[OK] unrelated Kata allocation remained healthy"
+
+  REPLACEMENT_ALLOC=""
+  for i in $(seq 1 90); do
+    REPLACEMENT_ALLOC=$(nomad job status -json kata-multi-vm 2>/dev/null \
+      | jq -r --arg failed "$FAILED_ALLOC" '[.[0].Allocations[] | select(.TaskGroup == "server" and .ID != $failed and .ClientStatus == "running")][0].ID // ""')
+    if [ -n "$REPLACEMENT_ALLOC" ]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [ -z "$REPLACEMENT_ALLOC" ]; then
+    echo "[FAIL] Nomad did not replace the poisoned allocation"
+    nomad job status kata-multi-vm || true
+    exit 1
+  fi
+  if pgrep -f "$FAILED_SANDBOX" >/dev/null; then
+    echo "[FAIL] failed sandbox ID was recreated in the same allocation"
+    pgrep -af "$FAILED_SANDBOX" || true
+    exit 1
+  fi
+  REPLACEMENT_EXEC=$(nomad alloc exec -i=false -t=false -task web "$REPLACEMENT_ALLOC" /bin/echo REPLACEMENT_OK 2>/dev/null || echo "")
+  if [ "$REPLACEMENT_EXEC" != "REPLACEMENT_OK" ]; then
+    echo "[FAIL] replacement allocation did not accept exec"
+    exit 1
+  fi
+  echo "[OK] poisoned allocation was replaced without same-ID sandbox recreation"
 
   echo ""
   echo "=== All integration tests passed ==="
